@@ -1,4 +1,4 @@
-module client
+module LunaRC
 
 go 1.22.1
 
