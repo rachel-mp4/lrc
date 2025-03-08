@@ -2,23 +2,32 @@ package main
 
 import (
 	"LunaRC/pkg/client"
+	"os"
+	"fmt"
+	"golang.org/x/term"
 )
 
 var (
-	url string
+	oldState *term.State
 )
 
 func main() {
-	client.SetTerminal()
-	defer client.ResetTerminal()
+	setTerminal()
+	defer resetTerminal()
+	client.InitView()
+	client.AcceptInput()
+}
 
-	url = ""
-	conn, err := client.Dial(url)
-	if (err != nil) {
-		client.ConnectionFailure(url, err)
-		return
+func setTerminal() {
+	old, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		panic(err)
 	}
-	defer client.HangUp(conn)
-	client.ConnectionSuccess(url)
-	
+	oldState = old
+	fmt.Print("\033[?1049h") //alt buffer on
+}
+
+func resetTerminal() {
+	fmt.Print("\033[?1049l") //alt buffer off
+	term.Restore(int(os.Stdin.Fd()), oldState)
 }

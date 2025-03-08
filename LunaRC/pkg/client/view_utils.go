@@ -1,0 +1,158 @@
+package client
+
+import (
+	"fmt"
+	"strings"
+)
+
+func moth() {
+	fmt.Println(`  %%%%%%%
+ %%%%%%%%%%  %%%            %   %           %%%%%%%%
+   %%%%%%%%%%%%%%%%%        %%%%     %%%%%%%%%%%%%%%%%%
+     %%%%%%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%%%%%%
+       %%%%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%%%
+            %%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%
+         %%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%
+       %%%%%%%%%%%%%%%%%%%%%    %%%%%%%%%%%%%%%%%%
+          %%%%%%%%%%%%         %%%%%%%%%%%%%%%%
+             %%%%%               %%%%%%%%%
+                                    %`)
+}
+
+func renderLineTop(l line) {
+	cursorHome()
+	renderLine(l)
+}
+
+func renderLineBottom(l line) {
+	cursorGoto(ts.h-1, 1)
+	renderLine(l)
+}
+
+func appendToLine(l line, s string) {
+	if l.from.active {
+		setColor(l.from.user.c)
+		inverted()
+	}
+	fmt.Print(s)
+	if l.from.active {
+		resetStyles()
+	}
+}
+
+func renderLine(l line) {
+	resetStyles()
+	nspaces := 12 - len(l.from.user.name)
+	fmt.Print(strings.Repeat(" ", nspaces))
+	if l.num == 0 {
+		setColor(l.from.user.c)
+		if l.from.active {
+			inverted()
+		}
+		fmt.Print(l.from.user.name)
+	}
+	resetStyles()
+	fmt.Print(" ")
+	if l.from.active {
+		setColor(l.from.user.c)
+		inverted()
+	}
+	cursorBeginLine()
+	fmt.Print(lineContents(l))
+}
+
+func scrollAllAbove(idx int) {
+	fmt.Printf("\033[1;%dr", idx)
+	scrollUp()
+	setupScrollRegion()
+}
+
+func setupScrollRegion() {
+	fmt.Printf("\033[1;%dr", ts.h-1)
+}
+
+func lineContents(l line) string {
+	ncpl :=(ts.w - 13) 
+	nlpm := len(l.from.text) / ncpl
+	
+	if nlpm > l.num {
+		return l.from.text[l.num*ncpl:(l.num+1)*ncpl]
+	} 
+	return l.from.text[l.num*ncpl:]
+}
+
+func clearLine() {
+	fmt.Printf("\033[2K")
+}
+
+func inverted() {
+	fmt.Printf("\033[7m")
+}
+
+func cursorDisplayNormal() {
+	fmt.Print("\033[5 q")
+}
+
+func cursorDisplayInsert() {
+	fmt.Print("\033[1 q")
+}
+
+func yellow() {
+	fmt.Print("\033[33m")
+}
+
+func clearAll() {
+	fmt.Print("\033[2J")
+	cursorHome()
+}
+
+func cursorGoto(row, col int) {
+	fmt.Printf("\033[%d;%dH", row, col)
+}
+
+func cursorHome() {
+	fmt.Print("\033[H")
+}
+
+// scrollUp scrolls the region down, adding a new line at the top
+func scrollDown() {
+	fmt.Print("\033[1T")
+}
+
+// scrollUp scrolls the region up, adding a new line at the bottom
+func scrollUp() {
+	fmt.Print("\033[1S")
+}
+
+func cursorUp() {
+	fmt.Print("\033[A")
+}
+
+func cursorFullLeft() {
+	fmt.Print("\033[1G")
+}
+
+func cursorDown() {
+	fmt.Print("\033[B")
+}
+
+func cursorBeginLine() {
+	fmt.Print("\033[14G")
+}
+
+func newLineInMessage() {
+	cursorDown()
+	cursorBeginLine()
+}
+
+func resetStyles() {
+	fmt.Print("\033[0m")
+}
+
+func setColor(colorCode uint8) {
+	fmt.Printf("\033[38;5;%dm", colorCode)
+}
+
+func faint() {
+	fmt.Print("\033[2m")
+}
