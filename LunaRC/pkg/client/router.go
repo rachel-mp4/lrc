@@ -27,7 +27,7 @@ type LRCCommand struct {
 	buf LRCEvent
 }
 
-func ConnectToChannel(url string, quit chan struct{}, send chan LRCEvent) net.Conn{
+func ConnectToChannel(url string, quit chan struct{}, send chan LRCEvent) net.Conn {
 	conn, err := dial(url)
 	if err != nil {
 		connectionFailure(url, err)
@@ -53,21 +53,25 @@ func deNagle(conn net.Conn) {
 }
 
 func listen(conn net.Conn, quit chan struct{}, send chan []byte) {
-	recieve := make(chan LRCEvent)
+	recieve := make(chan LRCEvent, 100)
 	go listenAndRelay(conn, recieve, quit)
 	for {
 		select {
 		case <-quit:
 			return
 		case cmd := <-recieve:
+			addToCmdLog(cmd)
 			if parseCommand(cmd) {
 				send <- PongCommand
 			}
+
 		}
 	}
 }
 
-var PongCommand = LRCEvent([]byte{0, 0, 0, 0, 1})
+var PingCommand = LRCEvent([]byte{byte(EventPing)})
+
+var PongCommand = LRCEvent([]byte{byte(EventPong)})
 
 func parseEventType(e LRCEvent) EventType {
 	return EventType(e[4])
@@ -76,7 +80,7 @@ func parseEventType(e LRCEvent) EventType {
 func parseCommand(e LRCEvent) bool {
 	switch parseEventType(e) {
 	case EventPing:
-		if len(e) > 5 {
+		if len([]byte(e)) > 5 {
 			setWelcomeMessage(string(e[5:]))
 		}
 		return true
@@ -108,7 +112,7 @@ func ponged() {
 }
 
 func parseInitEvent(e LRCEvent) (uint32, user, bool) {
-	return binary.BigEndian.Uint32(e[0:4]), user{e[5], string(e[6:])}, false
+	return binary.BigEndian.Uint32(e[0:4]), user{e[6], string(e[7:])}, false
 }
 
 func parsePubEvent(e LRCEvent) uint32 {

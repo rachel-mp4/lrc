@@ -16,6 +16,7 @@ var (
 	msgs       = make([]*message, 0)
 	lines      []line
 	fmtMu      sync.Mutex
+	cmdLog     []LRCEvent
 )
 
 type appState struct {
@@ -78,7 +79,7 @@ func initChan() {
 
 // TODO store and read from file
 func recallApplicationState() {
-	as = appState{"moth11.net", "", 0, 13, "wanderer"}
+	as = appState{"moth11.net", as.welcome, 0, 13, "wanderer"}
 }
 
 func getTerminalSize() {
@@ -146,7 +147,7 @@ func renderWelcomeMessage() {
 	fmtMu.Lock()
 	defer fmtMu.Unlock()
 
-	cursorGoto(ts.h, ts.w+8)
+	cursorGoto(ts.h, ts.w-5-len(as.welcome))
 	homeStyle()
 	fmt.Print(as.welcome)
 	resetStyles()
@@ -173,6 +174,11 @@ func renderHome() {
 		renderWelcomeMessage()
 	}
 	renderPing()
+	if is == chanInsert {
+		cursorBar()
+	} else {
+		cursorBlock()
+	}
 }
 
 func (m *message) lCount() int {
@@ -218,18 +224,15 @@ func appendAndRender(l line) {
 	}
 }
 
-// insertAndRender is called whenever a new line is inserted into the middle of lines 
-func insertAndRender(l line, midx int) {
-	if viewportFull() { //want to scroll up all the lines above the inserted line, if it's currently visible
-		lines = slices.Insert(lines, l.from.absPos + l.num)
-		cursorHome()
-		scrollAllAbove(l.from.absPos + l.num - ts.viewportTop)
-		cursorGoto(l.from.absPos + l.num - ts.viewportTop, 1)
-		renderLine(l)
-		ts.viewportTop = ts.viewportTop + 1
-		ts.viewportBottom = ts.viewportTop + 1
-	} else if len(lines) > ts.viewportBottom {
+func addToCmdLog(e LRCEvent) {
+	cmdLog = append(cmdLog, e)
+}
 
+func dumpCmdLog() {
+	clearAll()
+	cursorHome()
+	for _, v := range cmdLog {
+		fmt.Printf("%x\n", v)
 	}
 }
 
@@ -244,7 +247,7 @@ func pubMsg(id uint32) {
 
 	m := msgs[idToMsgIdx[id]]
 	m.active = false
-	fliv := findFLInViewport(id)
+	fliv := findFLInViewport(m)
 	if fliv == -1 {
 		return
 	} else {
@@ -262,8 +265,7 @@ func checkLinesIdxIsM(idx int, m *message) bool {
 	return lines[idx].from == m
 }
 
-func findFLInViewport(id uint32) int {
-	m := msgs[idToMsgIdx[id]]
+func findFLInViewport(m *message) int {
 	for i := ts.viewportTop; i <= ts.viewportBottom; i++ {
 		if i >= len(lines) {
 			return -1
@@ -279,16 +281,18 @@ func findAbsoluteLineNumberOf(msg *message, lnum int) int {
 	return msg.absPos + lnum + 1
 }
 
-func updateAbsoluteLineNumbersAfter(idx, by int) {
-	for i := idx; i < len(msgs); i++ {
+func updateAbsoluteLineNumbersAfter(idx int, by int) {
+	for i := idx + 1; i < len(msgs); i++ {
 		msgs[i].absPos += by
 	}
 }
 
 // move cursor down from vim
-func scrollViewportUp() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
+func scrollViewportUp(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
 
 	if ts.viewportTop == len(lines) {
 		return
@@ -305,9 +309,11 @@ func scrollViewportUp() {
 }
 
 // move cursor up from vim
-func scrollViewportDown() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
+func scrollViewportDown(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
 
 	if ts.viewportTop == 0 {
 		return
@@ -331,48 +337,13 @@ func insertIntoMsg(id uint32, idx uint16, s string) {
 	}
 	m := msgs[mi]
 	l := len(m.text)
-	clnum := (l - 1) / ts.cpl
-	nlnum := (l) / ts.cpl
-	fliv := findFLInViewport(id)
-	if fliv == -1 { //post not in viewport
-		a := m.text[:idx]
-		b := m.text[idx:]
-		nt := a + s + b
-		m.text = nt
-		if clnum != nlnum { //adds a newline, so we have to increase all subsequent messages lines cumsum
-			updateAbsoluteLineNumbersAfter(mi + 1, 1)
-			if m.absPos < ts.viewportTop { //occurs above our viewport, so we need to shift our viewport down to account
-				ts.viewportTop += 1
-				ts.viewportBottom += 1
-			}
-			nl := line{m, nlnum}
-			bp := msgs[mi+1].absPos - 1
-			lines = slices.Insert(lines, bp, nl)
-		}
-		return
+	if l == int(idx) {
+		appendTo(m, s, mi)
+	} else if l > int(idx) {
+		insertInto(m, idx, s, mi)
+	} else {
+		lateInsertInto(m, idx, s, mi)
 	}
-	if l == int(idx) { //append
-		if clnum == nlnum { //no newline issues
-			appendInViewWithNoNewline(m, clnum, s)
-		} else {
-			if mi == len(msgs) - 1 {
-				appendInViewWithNewlineLastMessage(m, nlnum, s)
-			} else {
-				appendInViewWithNewlineNonLast(m, mi, nlnum, s)
-			}
-			
-		}
-	} else if l < int(idx) { //insert
-		if clnum == nlnum {
-			insertInViewWithNoNewline(m, idx, s)
-		}
-
-	} else { //late insert
-	}
-}
-
-func insertInViewWithNoNewline(m *message, idx uint16, s string) {
-
 }
 
 func deleteFromMessage(id uint32, idx uint16) {
@@ -388,14 +359,14 @@ func deleteFromMessage(id uint32, idx uint16) {
 	l := len(m.text)
 	clnum := (l - 1) / ts.cpl
 	nlnum := (l - 2) / ts.cpl
-	fliv := findFLInViewport(id)
+	fliv := findFLInViewport(m)
 	if fliv == -1 { //post not in viewport
-		a := m.text[:idx - 1]
+		a := m.text[:idx-1]
 		b := m.text[idx:]
 		nt := a + b
 		m.text = nt
 		if clnum != nlnum { //subtracts a newline, so we have to decrease all subsequent messages lines cumsum
-			updateAbsoluteLineNumbersAfter(mi + 1, -1)
+			updateAbsoluteLineNumbersAfter(mi+1, -1)
 			if m.absPos < ts.viewportTop { //occurs above our viewport, so we need to shift our viewport down to account
 				ts.viewportTop -= 1
 				ts.viewportBottom -= 1
@@ -413,31 +384,10 @@ func deleteFromMessage(id uint32, idx uint16) {
 }
 
 func truncFromViewWithNoNewline(m *message, on int) {
-	cursorGoto(findAbsoluteLineNumberOf(m, on), 14 + (len(m.text))%ts.cpl)
+	cursorGoto(findAbsoluteLineNumberOf(m, on), 14+(len(m.text))%ts.cpl)
 	resetStyles()
 	fmt.Printf("\b \b")
 	m.text = m.text[:len(m.text)-1]
-}
-
-func truncFromViewWithNewline(m *message, on int) {
-	m.text = m.text[:len(m.text)-1]
-
-}
-
-func appendInViewWithNoNewline(m *message, on int, s string) {
-	cursorGoto(findAbsoluteLineNumberOf(m, on) - ts.viewportTop, 14+(len(m.text))%ts.cpl)
-	appendToLine(line{m, on}, s)
-	m.text = m.text + s
-}
-
-func appendInViewWithNewlineLastMessage(m *message, on int, s string) {
-	m.text = m.text + s
-	appendAndRender(line{m, on})
-}
-
-func appendInViewWithNewlineNonLast(m *message, midx int, on int, s string) {
-	m.text = m.text + s
-	insertAndRender(line{m, on}, midx)
 }
 
 func connectionFailure(to string, err error) {

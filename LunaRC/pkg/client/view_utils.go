@@ -40,6 +40,11 @@ func appendToLine(l line, s string) {
 	}
 }
 
+func insertIntoLine(l line, s string) {
+	insertCharacter()
+	appendToLine(l, s)
+}
+
 func renderLine(l line) {
 	resetStyles()
 	nspaces := 12 - len(l.from.user.name)
@@ -62,9 +67,30 @@ func renderLine(l line) {
 }
 
 func scrollAllAbove(idx int) {
+	if idx == 1 {
+		cursorHome()
+		clearLine()
+		return
+	}
 	fmt.Printf("\033[1;%dr", idx)
 	scrollUp()
 	setupScrollRegion()
+}
+
+func scrollAllBelow(idx int) {
+	if idx == ts.h - 1 {
+		cursorGoto(idx, 1)
+		clearLine()
+		return
+	}
+	fmt.Printf("\033[%d;%dr", idx, ts.h-1)
+	cursorGoto(idx, 1)
+	scrollDown()
+	setupScrollRegion()
+}
+
+func insertCharacter() {
+	fmt.Print("\033[1@")
 }
 
 func setupScrollRegion() {
@@ -72,13 +98,18 @@ func setupScrollRegion() {
 }
 
 func lineContents(l line) string {
-	ncpl :=(ts.w - 13) 
+	ncpl := (ts.w - 13)
 	nlpm := len(l.from.text) / ncpl
-	
+
 	if nlpm > l.num {
-		return l.from.text[l.num*ncpl:(l.num+1)*ncpl]
-	} 
+		return l.from.text[l.num*ncpl : (l.num+1)*ncpl]
+	}
 	return l.from.text[l.num*ncpl:]
+}
+
+func lineFirst(l line) string {
+	ncpl := (ts.w - 13)
+	return string(l.from.text[l.num*ncpl])
 }
 
 func clearLine() {
@@ -140,11 +171,6 @@ func cursorBeginLine() {
 	fmt.Print("\033[14G")
 }
 
-func newLineInMessage() {
-	cursorDown()
-	cursorBeginLine()
-}
-
 func resetStyles() {
 	fmt.Print("\033[0m")
 }
@@ -155,4 +181,12 @@ func setColor(colorCode uint8) {
 
 func faint() {
 	fmt.Print("\033[2m")
+}
+
+func cursorBar() {
+	fmt.Print("\033[5 q")
+}
+
+func cursorBlock() {
+	fmt.Print("\033[1 q")
 }

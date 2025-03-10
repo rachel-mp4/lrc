@@ -17,9 +17,10 @@ const (
 )
 
 var (
-	is        = menuNormal
-	cmdBuffer = ""
+	is               = menuNormal
+	cmdBuffer        = ""
 	cursor    uint16 = math.MaxUint16
+	wordL     uint16 = 0
 )
 
 func AcceptInput() {
@@ -33,20 +34,21 @@ quitloop:
 		case <-quit:
 			break quitloop
 		default:
-			_, err := os.Stdin.Read(buf)
+			n, err := os.Stdin.Read(buf)
 			if err != nil {
 				panic(err)
 			}
+			input := buf[:n]
 
 			switch is {
 			case menuNormal:
-				conn = inputMenuNormal(buf, quit, send)
+				conn = inputMenuNormal(input, quit, send)
 			case menuInsert:
-				inputMenuInsert(buf, quit, send)
+				inputMenuInsert(input, quit, send)
 			case chanNormal:
-				inputChanNormal(buf, quit, send)
+				inputChanNormal(input, quit, send)
 			case chanInsert:
-				inputChanInsert(buf, quit, send)
+				inputChanInsert(input, quit, send)
 			}
 		}
 	}
@@ -109,12 +111,15 @@ func switchToMenuNormal() {
 
 func inputChanNormal(buf []byte, quit chan struct{}, send chan LRCEvent) {
 	switch buf[0] {
+	case 100:
+		dumpCmdLog()
 	case 105:
 		switchToChanInsert()
+		cursorHome()
 	case 106:
-		scrollViewportDown()
+		scrollViewportDown(false)
 	case 107:
-	 	scrollViewportUp()
+		scrollViewportUp(false)
 	case 113:
 		close(quit)
 	}
@@ -130,23 +135,50 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan LRCEvent) {
 		if cursor == math.MaxUint16 {
 			cursor = 0
 			send <- genInitEvent()
+			wordL = 0
 		}
 		send <- genInsertEvent(cursor, string(buf[0]))
 		cursor = cursor + 1
-		
+		wordL = wordL - 1
+
 	} else if buf[0] == 127 {
-		if cursor > 0 && cursor!=math.MaxUint16 {
+		if cursor > 0 && cursor != math.MaxUint16 {
 			send <- genDeleteEvent(cursor)
 			cursor = cursor - 1
+			wordL = wordL - 1
 		}
 	} else if buf[0] == newline() {
 		if cursor != math.MaxUint16 {
 			cursor = math.MaxUint16
 			send <- genPubEvent()
+			wordL = 0
 		}
 	}
 	if buf[0] == 27 {
-		switchToChanNormal()
+		if len(buf) == 1 || buf[1] == 0 {
+			switchToChanNormal()
+			return
+		}
+		switch buf[2] {
+		case byte('A'): //up
+			if cursor != math.MaxUint16 {
+				cursor = 0
+			}
+		case 'B': //down
+			if cursor != math.MaxUint16 {
+				cursor = wordL
+			}
+		case 'C': //right
+			if cursor != wordL {
+				cursor = cursor + 1
+			}
+		case 'D': //left
+			if cursor != 0 {
+				cursor = cursor - 1
+			}
+		default:
+			switchToChanNormal()
+		}
 	}
 }
 
@@ -156,7 +188,7 @@ func switchToChanNormal() {
 }
 
 func genInitEvent() LRCEvent {
-	e := []byte{byte(EventInit), as.color}
+	e := []byte{byte(EventInit), 0, as.color}
 	e = append(e, []byte(as.name)...)
 	return e
 }
