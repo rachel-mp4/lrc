@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -37,6 +38,8 @@ func main() {
 	defer ln.Close()
 
 	go broadcaster()
+	wm := append([]byte{0, 0, 0, 0, byte(EventPing)}, []byte("Welcome To The Beginning Of The Rest Of Your Life")...)
+	prependLength(&wm)
 
 	for {
 		conn, err := ln.Accept()
@@ -46,12 +49,12 @@ func main() {
 		}
 		tcpConn := conn.(*net.TCPConn)
 		tcpConn.SetNoDelay(true)
-		go greet(conn)
+		go greet(conn, wm)
 	}
 }
 
-func greet(conn net.Conn) {
-	conn.Write(append([]byte{0, 0, 0, 0, byte(EventPing)}, []byte("Welcome To The Beginning Of The Rest Of Your Life")...))
+func greet(conn net.Conn, wm []byte) {
+	conn.Write(wm)
 	client := &Client{conn: conn, msgChan: make(chan []byte, 100)}
 	clientsMu.Lock()
 	clients[client] = true
@@ -67,13 +70,38 @@ func greet(conn net.Conn) {
 		}
 		m := make([]byte, n)
 		copy(m, buf)
-		msg := Msg{client, m}
-		messages <- msg
+		fmt.Printf("read %x\n", m)
+		err = parseMessages(m, client)
+		if err != nil {
+			break
+		}
 	}
 	clientsMu.Lock()
 	delete(clients, client)
 	clientsMu.Unlock()
 	conn.Close()
+}
+
+func parseMessages(buf []byte, client *Client) error {
+	for {
+		ml := int(buf[0])
+		fmt.Printf("ml = %x\n", buf[0])
+		if ml == 0 {
+			return errors.New("message length 0")
+		}
+		msg := make([]byte, ml - 1)
+		n := copy(msg, buf[1:])
+		if n != ml - 1 {
+			return errors.New("message longer than data")
+		}
+		fmt.Printf("parsed %x\n", msg)
+		messages <- Msg{client, msg}
+		if len(buf) - ml <= 0 {
+			break
+		}
+		buf = buf[ml:]
+	}
+	return nil
 }
 
 func clientWriter(client *Client) {
@@ -105,6 +133,7 @@ func broadcaster() {
 			clientToID[msg.client] = 0
 		}
 		prependId(&msg.msg, id)
+		prependLength(&msg.msg)
 		clientsMu.Lock()
 		for client := range clients {
 			select {
@@ -123,6 +152,13 @@ func broadcaster() {
 		fmt.Printf("\n")
 		clientsMu.Unlock()
 	}
+}
+
+func prependLength(data *[]byte) {
+	l := len(*data) + 1
+	n := make([]byte, 1, l)
+	n[0] = byte(l)
+	*data = append(n, *data...)
 }
 
 func prependId(data *[]byte, id uint32) {

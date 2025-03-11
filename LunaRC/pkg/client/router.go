@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/binary"
+	"errors"
 	"io"
 	"log"
 	"net"
@@ -61,10 +62,10 @@ func listen(conn net.Conn, quit chan struct{}, send chan []byte) {
 			return
 		case cmd := <-recieve:
 			addToCmdLog(cmd)
-			if parseCommand(cmd) {
-				send <- PongCommand
+			err := parseRead(cmd)
+			if err != nil {
+				close(quit)
 			}
-
 		}
 	}
 }
@@ -75,6 +76,26 @@ var PongCommand = LRCEvent([]byte{byte(EventPong)})
 
 func parseEventType(e LRCEvent) EventType {
 	return EventType(e[4])
+}
+
+func parseRead(buf []byte) error {
+	for {
+		ml := int(buf[0])
+		if ml == 0 {
+			return errors.New("message length 0")
+		}
+		msg := make([]byte, ml - 1)
+		n := copy(msg, buf[1:])
+		if n != ml - 1 {
+			return errors.New("message longer than data")
+		}
+		parseCommand(msg)
+		if len(buf) - ml <= 0 {
+			break
+		}
+		buf = buf[ml:]
+	}
+	return nil
 }
 
 func parseCommand(e LRCEvent) bool {
@@ -133,6 +154,7 @@ func chat(conn net.Conn, quit chan struct{}, send chan []byte) {
 		case <-quit:
 			return
 		case msg := <-send:
+			prependLength(&msg)
 			conn.Write(msg)
 		}
 	}
@@ -156,4 +178,11 @@ func listenAndRelay(conn net.Conn, recieve chan LRCEvent, quit chan struct{}) {
 		copy(e, buf)
 		recieve <- e
 	}
+}
+
+func prependLength(data *[]byte) {
+	l := len(*data) + 1
+	n := make([]byte, 1, l)
+	n[0] = byte(l)
+	*data = append(n, *data...)
 }

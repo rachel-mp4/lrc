@@ -71,6 +71,8 @@ func scrollAllAbove(idx int) {
 		cursorHome()
 		clearLine()
 		return
+	} else if idx >= ts.h {
+		idx = ts.h - 1
 	}
 	fmt.Printf("\033[1;%dr", idx)
 	scrollUp()
@@ -78,7 +80,7 @@ func scrollAllAbove(idx int) {
 }
 
 func scrollAllBelow(idx int) {
-	if idx == ts.h - 1 {
+	if idx == ts.h-1 {
 		cursorGoto(idx, 1)
 		clearLine()
 		return

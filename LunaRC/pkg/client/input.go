@@ -161,18 +161,22 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan LRCEvent) {
 		}
 		switch buf[2] {
 		case byte('A'): //up
+			break
 			if cursor != math.MaxUint16 {
 				cursor = 0
 			}
 		case 'B': //down
+			break
 			if cursor != math.MaxUint16 {
 				cursor = wordL
 			}
 		case 'C': //right
+			break
 			if cursor != wordL {
 				cursor = cursor + 1
 			}
 		case 'D': //left
+			break
 			if cursor != 0 {
 				cursor = cursor - 1
 			}

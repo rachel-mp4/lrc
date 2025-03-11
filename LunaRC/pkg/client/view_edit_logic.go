@@ -3,6 +3,7 @@ package client
 import (
 	"fmt"
 	"slices"
+	"strings"
 )
 
 func appendTo(m *message, s string, mi int) {
@@ -88,7 +89,13 @@ func appendEndOfLineInViewport(m *message, s string, mi int) {
 	nlan := nln + m.absPos
 	lines = slices.Insert(lines, nlan, nl)
 	updateAbsoluteLineNumbersAfter(mi, 1)
-	scrollAllBelow(nlan - ts.viewportTop + 1)
+	if lastLineJustInViewport(msgs[len(msgs)-1]) {
+		scrollAllAbove(nlan - ts.viewportTop )
+		ts.viewportBottom += 1
+		ts.viewportTop += 1
+	} else {
+		scrollAllBelow(nlan - ts.viewportTop + 1)
+	}
 	cursorGoto(nlan-ts.viewportTop+1, 1)
 	renderLine(nl)
 }
@@ -133,9 +140,9 @@ func insertInto(m *message, i uint16, s string, mi int) {
 		}
 	} else {
 		if idxJustInViewport(m, i) {
-			insertOverflowingJustInViewport(m, i, s)
+			insertOverflowingJustInViewport(m, i, s, mi)
 		} else if idxInViewport(m, i) {
-			insertOverflowingInViewport(m, i, s)
+			insertOverflowingInViewport(m, i, s, mi)
 		} else if idxAffectingViewport(m, i) {
 			insertOverflowingAffectingViewport(m, i, s, mi)
 		} else if lastLineAboveViewport(m) {
@@ -150,11 +157,13 @@ func insertInto(m *message, i uint16, s string, mi int) {
 
 // insertInLastLineNotInViewport inserts s at i in an m which is the last line of its m and which is not in viewport
 func insertInLastLineNotInViewport(m *message, i uint16, s string) {
+	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 }
 
 // insertInLastLineInViewport inserts s at i in an m which is the last line of its m and which is in viewport. Renders the change
 func insertInLastLineInViewport(m *message, i uint16, s string) {
+	return
 	l := lines[m.absPos+len(m.text)/ts.cpl]
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 	cursorGoto(findAbsoluteLineNumberOf(m, int(i)/ts.cpl)-ts.viewportTop, 14+int(i)%ts.cpl)
@@ -163,11 +172,13 @@ func insertInLastLineInViewport(m *message, i uint16, s string) {
 
 // insertInNotLastLineNotInViewport inserts s at i in an m where i is not in the last line of its m and which is not in viewport
 func insertInNotLastLineNotInViewport(m *message, i uint16, s string) {
+	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 }
 
 // insertInNotLastLineAffectingViewport inserts s at i in an m where i is not in the last line of its m which is not in viewport, but m has at least one line in viewport. Renders the change
 func insertInNotLastLineAffectingViewport(m *message, i uint16, s string) {
+	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 	for idx := ts.viewportTop; isALineOf(idx, m); idx++ {
 		c := lineFirst(lines[idx])
@@ -185,6 +196,7 @@ func isALineOf(idx int, m *message) bool {
 
 // insertInNotLastLineInViewport inserts s at i in an m where i is not in the last line of its m which is in viewport (the m is not necessarily entirely contained in the viewport). Renders the chagne
 func insertInNotLastLineInViewport(m *message, i uint16, s string) {
+	return
 	fi := m.absPos + len(m.text)/ts.cpl
 	l := lines[fi]
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
@@ -199,6 +211,7 @@ func insertInNotLastLineInViewport(m *message, i uint16, s string) {
 
 // insertOverflowingAboveViewport inserts s at i in an m that is currently full and which has no lines in viewport
 func insertOverflowingAboveViewport(m *message, i uint16, s string, mi int) {
+	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 	os := len(m.text)/ts.cpl
 	lli := m.absPos + os
@@ -211,37 +224,148 @@ func insertOverflowingAboveViewport(m *message, i uint16, s string, mi int) {
 
 // insertOverflowingAffectingViewport inserts s at i in an m that is currently full and which has at least one line in viewport, but i is not in viewport. Renders the change
 func insertOverflowingAffectingViewport(m *message, i uint16, s string, mi int) {
+	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
 	os := len(m.text)/ts.cpl
 	lli := m.absPos + os
 	nll := line{m, os}
-	lines = slices.Insert(lines,lli,nll)
-	
+	if mi == len(lines) - 1 {
+		lines = append(lines, nll)
+	} else {
+		lines = slices.Insert(lines,lli,nll)
+	}
+
+	ts.viewportTop += 1
+	ts.viewportBottom += 1
+	updateAbsoluteLineNumbersAfter(mi, 1)
+	scrollAllAbove(1 + os - ts.viewportTop)
+	for idx := 1; isALineOf(idx - 1 +ts.viewportTop, m); idx++ {
+		l := lines[idx]
+		cursorGoto(idx, 14)
+		insertIntoLine(l, lineFirst(l))
+	}
 }
 
 // insertOverflowingInViewport inserts s at i in an m that is currently full and where i is in viewport (the m is not necessarily entirely contained within viewport). Renders the change
-func insertOverflowingInViewport(m *message, i uint16, s string) {
-	fmt.Printf("logic err")
+func insertOverflowingInViewport(m *message, i uint16, s string, mi int) {
+	return
+	m.text = m.text[:int(i)] + s + m.text[int(i):]
+	os := len(m.text)/ts.cpl
+	lli := m.absPos + os
+	nll := line{m, os}
+	if mi == len(msgs) - 1 {
+		lines = append(lines, nll)
+	} else {
+		scrollAllBelow(msgs[mi].absPos - ts.viewportTop + 1)
+		lines = slices.Insert(lines,lli,nll)
+		updateAbsoluteLineNumbersAfter(mi, 1)
+	}
+	for idx := m.absPos + int(i)/ts.cpl; isALineOf(idx - 1 + ts.viewportTop, m); idx ++ {
+		l := lines[idx]
+		cursorGoto(idx, 14)
+		insertIntoLine(l, lineFirst(l))
+	}
 }
 
 // insertOverflowingJustInViewport inserts s at i in an m that is currently full and where i is in a just full viewport (the m is not necessarily entirely contained within viewport). Renders the change
-func insertOverflowingJustInViewport(m *message, i uint16, s string) {
-	fmt.Printf("logic err")
+func insertOverflowingJustInViewport(m *message, i uint16, s string, mi int) {
+	return
+	m.text = m.text[:int(i)] + s + m.text[int(i):]
+	os := len(m.text)/ts.cpl
+	lli := m.absPos + os
+	nll := line{m, os}
+	if mi == len(lines) - 1 {
+		lines = append(lines, nll)
+	} else {
+		lines = slices.Insert(lines,lli,nll)
+	}
+	scrollAllAbove(lli - ts.viewportTop)
+	ts.viewportTop += 1
+	ts.viewportBottom += 1
+	updateAbsoluteLineNumbersAfter(mi, 1)
 }
 
 // insertOverflowingEffectOutOfViewport inserts s at i in an m that is currently full and where there are more messages after m, and this occurs on the last line of the viewport
 func insertOverflowingEffectOutOfViewport(m *message, i uint16, s string) {
-	fmt.Printf("logic err")
+	return
 }
 
 // insertOverflowingBelowViewport inserts s at i in an m that is currently full and where i is below viewport
 func insertOverflowingBelowViewport(m *message, i uint16, s string) {
-	fmt.Printf("logic err")
+	return
 }
 
-// TODO: late insert logic
+//TODO
 func lateInsertInto(m *message, i uint16, s string, mi int) {
-	fmt.Printf("logic error")
+	cl := len(m.text)
+	nl := int(i)
+	clc := cl / ts.cpl
+	nlc := nl / ts.cpl
+	m.text += strings.Repeat(" ", nl - cl)
+	cursorGoto(m.absPos - ts.viewportTop + 1, 1)
+	renderLine(lines[m.absPos])
+	if clc != nlc {
+		if mi == len(msgs) - 1 {
+			for ln := clc + 1; ln <= nlc; ln ++ {
+				l :=  line{m, ln}
+				lines = append(lines,l)
+				cursorGoto(m.absPos - ts.viewportTop + 1 + ln, 1)
+				renderLine(l)
+			}
+		} else {
+			return //should only be reachable with inserts, which are currently unimplemented
+			ls := make([]line, 0, nlc - clc)
+			for ln := clc + 1; ln <= nlc; ln ++ {
+				ls = append(ls, line{m, ln})
+			}
+			lines = slices.Insert(lines, m.absPos + clc, ls...)
+		}
+	}
+	appendTo(m, s, mi)
+}
+
+func truncFrom(m *message, mi int) {
+	if !overflowed(m) {
+		if lastLineInViewport(m) {
+			truncInLineInViewport(m)
+		} else {
+			truncInLineNotInViewport(m)
+		}
+	} else if isLast(m) {
+		if lastLineBarelyInViewport(m) {
+			truncEndOfAllLinesBarelyInViewport(m)
+		} else if lastLineInViewport(m) {
+			truncEndOfAllLinesInViewport(m)
+		} else {
+			truncEndOfAllLinesBelowViewport(m)
+		}
+	}
+}
+
+func truncInLineInViewport(m *message) {
+	l := len(m.text)
+	cursorGoto(findAbsoluteLineNumberOf(m, l/ts.cpl)-ts.viewportTop, 14+l%ts.cpl)
+	resetStyles()
+	fmt.Print("\b \b")
+	m.text = m.text[:len(m.text) - 1]
+}
+
+func truncInLineNotInViewport(m *message) {
+	m.text = m.text[:len(m.text) - 1]
+}
+
+func truncEndOfAllLinesBarelyInViewport(m *message) {
+	scrollViewportDown(true)
+	truncEndOfAllLinesInViewport(m)
+}
+
+func truncEndOfAllLinesInViewport(m *message) {
+	
+}
+
+func truncEndOfAllLinesBelowViewport(m *message) {
+	m.text = m.text[:len(m.text) - 1]
+	lines = lines[:len(lines)-1]
 }
 
 func messageNotInViewport(m *message) bool {
@@ -251,7 +375,7 @@ func messageNotInViewport(m *message) bool {
 func idxJustInViewport(m *message, idx uint16) bool {
 	idxLine := int(idx) / ts.cpl
 	lc := len(m.text) / ts.cpl
-	return idxLine == lc && lastLineJustInViewport(m)
+	return idxLine == lc && lastLineJustInViewport(msgs[len(msgs)-1])
 }
 
 func idxAffectingViewport(m *message, idx uint16) bool {
@@ -287,6 +411,11 @@ func lastLineInViewport(m *message) bool {
 	return lnumInViewport(llpos)
 }
 
+func lastLineBarelyInViewport(m *message) bool {
+	llpos := m.absPos + len(m.text)/ts.cpl - ts.viewportTop
+	return llpos == 0
+}
+
 // lastLineJustInViewport returns true if the last line of m is the last line of the viewport
 func lastLineJustInViewport(m *message) bool {
 	llpos := m.absPos + len(m.text)/ts.cpl
@@ -304,4 +433,12 @@ func overflowing(m *message) bool {
 	lc := l / ts.cpl
 	cill := l % ts.cpl
 	return cill == 0 && lc != 0
+}
+
+// overflowed returns true if m just overflowed
+func overflowed(m *message) bool {
+	l := len(m.text)
+	lc := l / ts.cpl
+	cill := l % ts.cpl
+	return cill == 1 && lc != 0
 }
