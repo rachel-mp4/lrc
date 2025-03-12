@@ -129,6 +129,10 @@ func broadcaster() {
 			lastID += 1
 			id = lastID
 		}
+		if isPing(msg.msg) {
+			msg.client.msgChan <- PongCommand
+			continue
+		}
 		if isPub(msg.msg) {
 			clientToID[msg.client] = 0
 		}
@@ -191,7 +195,7 @@ func isPing(data []byte) bool {
 // EventType determines how a command on the LRC protocol should be interpreted
 type EventType uint8
 
-var PongCommand = []byte{0, 0, 0, 0, 1}
+var PongCommand = []byte{6, 0, 0, 0, 0, 1}
 
 const (
 	EventPing       EventType = iota // EventPing is a request for a pong, and if it comes from a server, it can also contain a welcome message

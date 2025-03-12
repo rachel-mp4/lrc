@@ -66,7 +66,7 @@ func renderLine(l line) {
 	fmt.Print(lineContents(l))
 }
 
-func scrollAllAbove(idx int) {
+func scrollUpAbove(idx int) {
 	if idx == 1 {
 		cursorHome()
 		clearLine()
@@ -79,7 +79,20 @@ func scrollAllAbove(idx int) {
 	setupScrollRegion()
 }
 
-func scrollAllBelow(idx int) {
+func scrollDownAbove(idx int) {
+	if idx == 1 {
+		cursorHome()
+		clearLine()
+		return
+	} else if idx >= ts.h {
+		idx = ts.h - 1
+	}
+	fmt.Printf("\033[1;%dr", idx)
+	scrollDown()
+	setupScrollRegion()
+} 
+
+func scrollDownBelow(idx int) {
 	if idx == ts.h-1 {
 		cursorGoto(idx, 1)
 		clearLine()
@@ -88,6 +101,18 @@ func scrollAllBelow(idx int) {
 	fmt.Printf("\033[%d;%dr", idx, ts.h-1)
 	cursorGoto(idx, 1)
 	scrollDown()
+	setupScrollRegion()
+}
+
+func scrollUpBelow(idx int) {
+	if idx == ts.h-1 {
+		cursorGoto(idx, 1)
+		clearLine()
+		return
+	}
+	fmt.Printf("\033[%d;%dr", idx, ts.h-1)
+	cursorGoto(idx, 1)
+	scrollUp()
 	setupScrollRegion()
 }
 

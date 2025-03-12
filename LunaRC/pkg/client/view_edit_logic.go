@@ -90,11 +90,11 @@ func appendEndOfLineInViewport(m *message, s string, mi int) {
 	lines = slices.Insert(lines, nlan, nl)
 	updateAbsoluteLineNumbersAfter(mi, 1)
 	if lastLineJustInViewport(msgs[len(msgs)-1]) {
-		scrollAllAbove(nlan - ts.viewportTop )
+		scrollUpAbove(nlan - ts.viewportTop)
 		ts.viewportBottom += 1
 		ts.viewportTop += 1
 	} else {
-		scrollAllBelow(nlan - ts.viewportTop + 1)
+		scrollDownBelow(nlan - ts.viewportTop + 1)
 	}
 	cursorGoto(nlan-ts.viewportTop+1, 1)
 	renderLine(nl)
@@ -213,7 +213,7 @@ func insertInNotLastLineInViewport(m *message, i uint16, s string) {
 func insertOverflowingAboveViewport(m *message, i uint16, s string, mi int) {
 	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
-	os := len(m.text)/ts.cpl
+	os := len(m.text) / ts.cpl
 	lli := m.absPos + os
 	nll := line{m, os}
 	lines = slices.Insert(lines, lli, nll)
@@ -226,20 +226,20 @@ func insertOverflowingAboveViewport(m *message, i uint16, s string, mi int) {
 func insertOverflowingAffectingViewport(m *message, i uint16, s string, mi int) {
 	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
-	os := len(m.text)/ts.cpl
+	os := len(m.text) / ts.cpl
 	lli := m.absPos + os
 	nll := line{m, os}
-	if mi == len(lines) - 1 {
+	if mi == len(lines)-1 {
 		lines = append(lines, nll)
 	} else {
-		lines = slices.Insert(lines,lli,nll)
+		lines = slices.Insert(lines, lli, nll)
 	}
 
 	ts.viewportTop += 1
 	ts.viewportBottom += 1
 	updateAbsoluteLineNumbersAfter(mi, 1)
-	scrollAllAbove(1 + os - ts.viewportTop)
-	for idx := 1; isALineOf(idx - 1 +ts.viewportTop, m); idx++ {
+	scrollUpAbove(1 + os - ts.viewportTop)
+	for idx := 1; isALineOf(idx-1+ts.viewportTop, m); idx++ {
 		l := lines[idx]
 		cursorGoto(idx, 14)
 		insertIntoLine(l, lineFirst(l))
@@ -250,17 +250,17 @@ func insertOverflowingAffectingViewport(m *message, i uint16, s string, mi int) 
 func insertOverflowingInViewport(m *message, i uint16, s string, mi int) {
 	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
-	os := len(m.text)/ts.cpl
+	os := len(m.text) / ts.cpl
 	lli := m.absPos + os
 	nll := line{m, os}
-	if mi == len(msgs) - 1 {
+	if mi == len(msgs)-1 {
 		lines = append(lines, nll)
 	} else {
-		scrollAllBelow(msgs[mi].absPos - ts.viewportTop + 1)
-		lines = slices.Insert(lines,lli,nll)
+		scrollDownBelow(msgs[mi].absPos - ts.viewportTop + 1)
+		lines = slices.Insert(lines, lli, nll)
 		updateAbsoluteLineNumbersAfter(mi, 1)
 	}
-	for idx := m.absPos + int(i)/ts.cpl; isALineOf(idx - 1 + ts.viewportTop, m); idx ++ {
+	for idx := m.absPos + int(i)/ts.cpl; isALineOf(idx-1+ts.viewportTop, m); idx++ {
 		l := lines[idx]
 		cursorGoto(idx, 14)
 		insertIntoLine(l, lineFirst(l))
@@ -271,15 +271,15 @@ func insertOverflowingInViewport(m *message, i uint16, s string, mi int) {
 func insertOverflowingJustInViewport(m *message, i uint16, s string, mi int) {
 	return
 	m.text = m.text[:int(i)] + s + m.text[int(i):]
-	os := len(m.text)/ts.cpl
+	os := len(m.text) / ts.cpl
 	lli := m.absPos + os
 	nll := line{m, os}
-	if mi == len(lines) - 1 {
+	if mi == len(lines)-1 {
 		lines = append(lines, nll)
 	} else {
-		lines = slices.Insert(lines,lli,nll)
+		lines = slices.Insert(lines, lli, nll)
 	}
-	scrollAllAbove(lli - ts.viewportTop)
+	scrollUpAbove(lli - ts.viewportTop)
 	ts.viewportTop += 1
 	ts.viewportBottom += 1
 	updateAbsoluteLineNumbersAfter(mi, 1)
@@ -295,30 +295,30 @@ func insertOverflowingBelowViewport(m *message, i uint16, s string) {
 	return
 }
 
-//TODO
+// TODO
 func lateInsertInto(m *message, i uint16, s string, mi int) {
 	cl := len(m.text)
 	nl := int(i)
 	clc := cl / ts.cpl
 	nlc := nl / ts.cpl
-	m.text += strings.Repeat(" ", nl - cl)
-	cursorGoto(m.absPos - ts.viewportTop + 1, 1)
+	m.text += strings.Repeat(" ", nl-cl)
+	cursorGoto(m.absPos-ts.viewportTop+1, 1)
 	renderLine(lines[m.absPos])
 	if clc != nlc {
-		if mi == len(msgs) - 1 {
-			for ln := clc + 1; ln <= nlc; ln ++ {
-				l :=  line{m, ln}
-				lines = append(lines,l)
-				cursorGoto(m.absPos - ts.viewportTop + 1 + ln, 1)
+		if mi == len(msgs)-1 {
+			for ln := clc + 1; ln <= nlc; ln++ {
+				l := line{m, ln}
+				lines = append(lines, l)
+				cursorGoto(m.absPos-ts.viewportTop+1+ln, 1)
 				renderLine(l)
 			}
 		} else {
 			return //should only be reachable with inserts, which are currently unimplemented
-			ls := make([]line, 0, nlc - clc)
-			for ln := clc + 1; ln <= nlc; ln ++ {
+			ls := make([]line, 0, nlc-clc)
+			for ln := clc + 1; ln <= nlc; ln++ {
 				ls = append(ls, line{m, ln})
 			}
-			lines = slices.Insert(lines, m.absPos + clc, ls...)
+			lines = slices.Insert(lines, m.absPos+clc, ls...)
 		}
 	}
 	appendTo(m, s, mi)
@@ -337,21 +337,31 @@ func truncFrom(m *message, mi int) {
 		} else if lastLineInViewport(m) {
 			truncEndOfAllLinesInViewport(m)
 		} else {
-			truncEndOfAllLinesBelowViewport(m)
+			truncEndOfAllLinesBelowViewport(m, mi)
+		}
+	} else {
+		if lastLineBarelyInViewport(m) {
+			truncEndOfLineBarelyInViewport(m, mi)
+		} else if lastLineInViewport(m) {
+			truncEndOfLineInViewport(m, mi)
+		} else if lastLineAboveViewport(m) {
+			truncEndOfLineAboveViewport(m, mi)
+		} else {
+			truncEndOfLineBelowViewport(m, mi)
 		}
 	}
 }
 
 func truncInLineInViewport(m *message) {
-	l := len(m.text)
+	l := len(m.text) - 1
 	cursorGoto(findAbsoluteLineNumberOf(m, l/ts.cpl)-ts.viewportTop, 14+l%ts.cpl)
 	resetStyles()
-	fmt.Print("\b \b")
-	m.text = m.text[:len(m.text) - 1]
+	fmt.Print(" \b")
+	m.text = m.text[:len(m.text)-1]
 }
 
 func truncInLineNotInViewport(m *message) {
-	m.text = m.text[:len(m.text) - 1]
+	m.text = m.text[:len(m.text)-1]
 }
 
 func truncEndOfAllLinesBarelyInViewport(m *message) {
@@ -360,12 +370,63 @@ func truncEndOfAllLinesBarelyInViewport(m *message) {
 }
 
 func truncEndOfAllLinesInViewport(m *message) {
-	
+	cursorGoto(len(lines)-ts.viewportTop, 1)
+	clearLine()
+	m.text = m.text[:len(m.text)-1]
+	lines = lines[:len(lines)-1]
 }
 
-func truncEndOfAllLinesBelowViewport(m *message) {
-	m.text = m.text[:len(m.text) - 1]
+func truncEndOfAllLinesBelowViewport(m *message, mi int) {
+	m.text = m.text[:len(m.text)-1]
 	lines = lines[:len(lines)-1]
+	updateAbsoluteLineNumbersAfter(mi, -1)
+}
+
+func truncEndOfLineAboveViewport(m *message, mi int) {
+	lli := m.absPos + len(m.text)/ts.cpl
+	m.text = m.text[:len(m.text)-1]
+	lines = slices.Delete(lines, lli, lli+1)
+	ts.viewportTop -= 1
+	ts.viewportBottom -= 1
+	updateAbsoluteLineNumbersAfter(mi, -1)
+}
+
+func truncEndOfLineBarelyInViewport(m *message, mi int) {
+	lli := m.absPos + len(m.text)/ts.cpl
+	m.text = m.text[:len(m.text)-1]
+	lines = slices.Delete(lines, lli, lli+1)
+	ts.viewportTop -= 1
+	ts.viewportBottom -= 1
+	cursorGoto(1, 1)
+	clearLine()
+	nl := lines[lli-1]
+	renderLine(nl)
+	updateAbsoluteLineNumbersAfter(mi, -1)
+}
+
+func truncEndOfLineInViewport(m *message, mi int) {
+	lli := m.absPos + len(m.text)/ts.cpl
+	m.text = m.text[:len(m.text)-1]
+	lines = slices.Delete(lines, lli, lli+1)
+	if lastLineBarelyInViewport(m) {
+		cursorGoto(1, 1)
+		clearLine()
+		nl := lines[lli-1]
+		renderLine(nl)
+		ts.viewportBottom -= 1
+		ts.viewportTop -= 1
+	} else {
+		scrollUpBelow(lli - ts.viewportTop + 1)
+	}
+	updateAbsoluteLineNumbersAfter(mi, -1)
+
+}
+
+func truncEndOfLineBelowViewport(m *message, mi int) {
+	lli := m.absPos + len(m.text)/ts.cpl
+	m.text = m.text[:len(m.text)-1]
+	lines = slices.Delete(lines, lli, lli+1)
+	updateAbsoluteLineNumbersAfter(mi, -1)
 }
 
 func messageNotInViewport(m *message) bool {

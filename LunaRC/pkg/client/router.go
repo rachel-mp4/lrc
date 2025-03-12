@@ -37,6 +37,7 @@ func ConnectToChannel(url string, quit chan struct{}, send chan LRCEvent) net.Co
 	deNagle(conn)
 	go listen(conn, quit, send)
 	go chat(conn, quit, send)
+	go pinger(send)
 	return conn
 }
 
@@ -121,8 +122,18 @@ func parseCommand(e LRCEvent) bool {
 
 var pingChannel = make(chan struct{})
 
-func ping() {
+func pinger(send chan LRCEvent) {
+	for {
+		ping(send)
+		time.Sleep(time.Second * 5)
+	}
+}
+
+func ping(send chan LRCEvent) {
+	p := make([]byte, 1)
+	copy(p, PingCommand)
 	t0 := time.Now()
+	send <- p
 	<-pingChannel
 	t1 := time.Now()
 	setPingTo(int(t1.Sub(t0).Milliseconds()))

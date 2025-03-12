@@ -3,9 +3,7 @@ package client
 import (
 	"fmt"
 	"os"
-	"slices"
 	"sync"
-
 	"golang.org/x/term"
 )
 
@@ -63,7 +61,7 @@ func InitView() {
 	resetStyles()
 	faint()
 	fmt.Println(`  ...and now you're using LunaRC,
-	an LRC client made by moth11...`)
+     an LRC client made by moth11...`)
 	resetStyles()
 	fmtMu.Unlock()
 	resizeChan := make(chan struct{})
@@ -72,8 +70,10 @@ func InitView() {
 }
 
 func initChan() {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
 	clearAll()
-	renderHome()
+	renderHome(true)
 	lines = make([]line, 0)
 }
 
@@ -100,9 +100,8 @@ func resize(resizeChan chan struct{}) {
 	}
 }
 
-// TODO fix state after resize
 func fixAfterResize() {
-
+	rerender()
 }
 
 func setPingTo(ms int) {
@@ -110,13 +109,13 @@ func setPingTo(ms int) {
 		ms = 999
 	}
 	as.ping = ms
-	renderPing()
+	renderPing(false)
 }
 
 func setWelcomeMessage(s string) {
 	as.welcome = s
 	if spaceForWelcome() {
-		renderWelcomeMessage()
+		renderWelcomeMessage(false)
 	}
 }
 
@@ -126,16 +125,18 @@ func spaceForWelcome() bool {
 
 func homeStyle() {
 	setColor(as.color)
-	if is == chanNormal {
+	if is == chanNormal && cs != color {
 		faint()
 	} else {
 		inverted()
 	}
 }
 
-func renderPing() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
+func renderPing(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
 
 	cursorGoto(ts.h, ts.w-4)
 	homeStyle()
@@ -143,9 +144,11 @@ func renderPing() {
 	resetStyles()
 }
 
-func renderWelcomeMessage() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
+func renderWelcomeMessage(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
 
 	cursorGoto(ts.h, ts.w-5-len(as.welcome))
 	homeStyle()
@@ -153,32 +156,54 @@ func renderWelcomeMessage() {
 	resetStyles()
 }
 
-func renderUrl() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
+func renderUrl(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
+	
 
 	homeStyle()
 	fmt.Printf("lrc://%s/", as.url)
 	resetStyles()
 }
 
-func renderHome() {
-	fmtMu.Lock()
+func renderHome(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
+
 	fmt.Printf("\033[%d;1H", ts.h)
 	homeStyle()
 	fmt.Printf("%-"+fmt.Sprintf("%d", ts.w)+"s", " ")
 	cursorFullLeft()
-	fmtMu.Unlock()
-	renderUrl()
+	renderUrl(true)
 	if spaceForWelcome() {
-		renderWelcomeMessage()
+		renderWelcomeMessage(true)
 	}
-	renderPing()
+	renderPing(true)
 	if is == chanInsert {
 		cursorBar()
 	} else {
 		cursorBlock()
 	}
+}
+
+func rerender() {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	clearAll()
+	cursorHome()
+	for idx := 1; idx < ts.h; idx++ {
+		if idx + ts.viewportTop > len(lines) {
+			break
+		}
+		cursorGoto(idx, 1)
+		renderLine(lines[idx - 1])
+	}
+	renderHome(true)
 }
 
 func (m *message) lCount() int {
@@ -357,37 +382,11 @@ func deleteFromMessage(id uint32, idx uint16) {
 	}
 	m := msgs[mi]
 	l := len(m.text)
-	clnum := (l - 1) / ts.cpl
-	nlnum := (l - 2) / ts.cpl
-	fliv := findFLInViewport(m)
-	if fliv == -1 { //post not in viewport
-		a := m.text[:idx-1]
-		b := m.text[idx:]
-		nt := a + b
-		m.text = nt
-		if clnum != nlnum { //subtracts a newline, so we have to decrease all subsequent messages lines cumsum
-			updateAbsoluteLineNumbersAfter(mi+1, -1)
-			if m.absPos < ts.viewportTop { //occurs above our viewport, so we need to shift our viewport down to account
-				ts.viewportTop -= 1
-				ts.viewportBottom -= 1
-			}
-			bp := msgs[mi+1].absPos - 1
-			lines = slices.Delete(lines, bp, nlnum) //i think this is wrong
-		}
-		return
-	}
 	if l == int(idx) {
-		if clnum == nlnum {
-			truncFromViewWithNoNewline(m, clnum)
-		}
-	}
-}
+		truncFrom(m, mi)
+	} else if l > int(idx) {
 
-func truncFromViewWithNoNewline(m *message, on int) {
-	cursorGoto(findAbsoluteLineNumberOf(m, on), 14+(len(m.text))%ts.cpl)
-	resetStyles()
-	fmt.Printf("\b \b")
-	m.text = m.text[:len(m.text)-1]
+	}
 }
 
 func connectionFailure(to string, err error) {

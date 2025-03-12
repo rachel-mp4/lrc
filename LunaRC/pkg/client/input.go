@@ -2,9 +2,11 @@ package client
 
 import (
 	"encoding/binary"
+	"fmt"
 	"math"
 	"net"
 	"os"
+	"strconv"
 )
 
 type inputState = int
@@ -16,7 +18,16 @@ const (
 	chanInsert
 )
 
+type cmdState = int
+
+const (
+	none cmdState = iota
+	name
+	color
+)
+
 var (
+	cs               = none
 	is               = menuNormal
 	cmdBuffer        = ""
 	cursor    uint16 = math.MaxUint16
@@ -110,24 +121,118 @@ func switchToMenuNormal() {
 }
 
 func inputChanNormal(buf []byte, quit chan struct{}, send chan LRCEvent) {
-	switch buf[0] {
-	case 100:
-		dumpCmdLog()
-	case 105:
-		switchToChanInsert()
-		cursorHome()
-	case 106:
-		scrollViewportDown(false)
-	case 107:
-		scrollViewportUp(false)
-	case 113:
-		close(quit)
+	switch cs {
+	case none:
+		switch buf[0] {
+		case 99:
+			setMyColor()
+		case 100:
+			dumpCmdLog()
+		case 105:
+			switchToChanInsert()
+			cursorHome()
+		case 106:
+			scrollViewportDown(false)
+		case 107:
+			scrollViewportUp(false)
+		case 110:
+			setName()
+		case 113:
+			close(quit)
+		case 114:
+			rerender()
+		}
+	case name:
+		if buf[0] > 31 && buf[0] < 127 {
+			if len(cmdBuffer) < 12 {
+				cmdBuffer = cmdBuffer + string(buf[0])
+				renderPartialName()
+			}
+		} else if buf[0] == 127 {
+			if cmdBuffer != "" {
+				cmdBuffer = string(cmdBuffer[:len(cmdBuffer)-1])
+				renderPartialName()
+			}
+		} else if buf[0] == newline() {
+			setNameTo()
+		}
+	case color:
+		if buf[0] > 31 && buf[0] < 127 {
+			if len(cmdBuffer) < 3 {
+				cmdBuffer = cmdBuffer + string(buf[0])
+				renderPartialColor()
+			}
+		} else if buf[0] == 127 {
+			if cmdBuffer != "" {
+				cmdBuffer = string(cmdBuffer[:len(cmdBuffer)-1])
+				renderPartialColor()
+			}
+		} else if buf[0] == newline() {
+			setMyColorTo()
+		}
 	}
+}
+
+func setName() {
+	cs = name
+	renderPartialName()
+}
+
+func setNameTo() {
+	if len(cmdBuffer) > 12 {
+		cmdBuffer = cmdBuffer[:12]
+	}
+	as.name = cmdBuffer
+	cmdBuffer = ""
+	cs = none
+	rerender()
+}
+
+func renderPartialName() {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	cursorGoto(ts.h, 1)
+	clearLine()
+	homeStyle()
+	fmt.Printf("%s", cmdBuffer)
+	renderPing(true)
+}
+
+func setMyColor() {
+	cs = color
+	renderPartialColor()
+}
+
+func renderPartialColor() {
+	c, _ := strconv.Atoi(cmdBuffer)
+	if cmdBuffer == "" {
+		c = 15
+	}
+	as.color = uint8(c)
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+	cursorGoto(ts.h, 1)
+	clearLine()
+	homeStyle()
+	fmt.Printf("%s", cmdBuffer)
+	renderPing(true)
+}
+
+func setMyColorTo() {
+	c, _ := strconv.Atoi(cmdBuffer)
+	if cmdBuffer == "" {
+		c = 15
+	}
+	as.color = uint8(c)
+	cmdBuffer = ""
+	cs = none
+	rerender()
 }
 
 func switchToChanInsert() {
 	is = chanInsert
-	renderHome()
+	renderHome(false)
 }
 
 func inputChanInsert(buf []byte, quit chan struct{}, send chan LRCEvent) {
@@ -155,40 +260,41 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan LRCEvent) {
 		}
 	}
 	if buf[0] == 27 {
-		if len(buf) == 1 || buf[1] == 0 {
-			switchToChanNormal()
-			return
-		}
-		switch buf[2] {
-		case byte('A'): //up
-			break
-			if cursor != math.MaxUint16 {
-				cursor = 0
-			}
-		case 'B': //down
-			break
-			if cursor != math.MaxUint16 {
-				cursor = wordL
-			}
-		case 'C': //right
-			break
-			if cursor != wordL {
-				cursor = cursor + 1
-			}
-		case 'D': //left
-			break
-			if cursor != 0 {
-				cursor = cursor - 1
-			}
-		default:
-			switchToChanNormal()
-		}
+		switchToChanNormal()
+		return
+		// if len(buf) == 1 || buf[1] == 0 {
+
+		// }
+		// switch buf[2] {
+		// case byte('A'): //up
+		// 	break
+		// 	if cursor != math.MaxUint16 {
+		// 		cursor = 0
+		// 	}
+		// case 'B': //down
+		// 	break
+		// 	if cursor != math.MaxUint16 {
+		// 		cursor = wordL
+		// 	}
+		// case 'C': //right
+		// 	break
+		// 	if cursor != wordL {
+		// 		cursor = cursor + 1
+		// 	}
+		// case 'D': //left
+		// 	break
+		// 	if cursor != 0 {
+		// 		cursor = cursor - 1
+		// 	}
+		// default:
+		// 	switchToChanNormal()
+		// }
 	}
 }
 
 func switchToChanNormal() {
 	is = chanNormal
-	renderHome()
+	renderHome(false)
 }
 
 func genInitEvent() LRCEvent {
