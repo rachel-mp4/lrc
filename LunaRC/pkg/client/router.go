@@ -46,7 +46,7 @@ func hangUp(conn net.Conn) {
 }
 
 func dial(url string) (net.Conn, error) {
-	return net.Dial("tcp", ":927")
+	return net.Dial("tcp",  as.url + ":927")
 }
 
 func deNagle(conn net.Conn) {

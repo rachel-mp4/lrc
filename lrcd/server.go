@@ -31,7 +31,7 @@ var (
 func main() {
 	log := log.Default()
 	log.Println("Hello, world!")
-	ln, err := net.Listen("tcp", ":927")
+	ln, err := net.Listen("tcp",":927")
 	if err != nil {
 		log.Fatal(err)
 	}
