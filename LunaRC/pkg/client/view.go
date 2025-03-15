@@ -2,9 +2,10 @@ package client
 
 import (
 	"fmt"
+	"golang.org/x/term"
+	"lrc"
 	"os"
 	"sync"
-	"golang.org/x/term"
 )
 
 var (
@@ -14,7 +15,7 @@ var (
 	msgs       = make([]*message, 0)
 	lines      []line
 	fmtMu      sync.Mutex
-	cmdLog     []LRCEvent
+	cmdLog     []events.LRCEvent
 )
 
 type appState struct {
@@ -161,7 +162,6 @@ func renderUrl(alreadyLocked bool) {
 		fmtMu.Lock()
 		defer fmtMu.Unlock()
 	}
-	
 
 	homeStyle()
 	fmt.Printf("lrc://%s/", as.url)
@@ -197,11 +197,11 @@ func rerender() {
 	clearAll()
 	cursorHome()
 	for idx := 1; idx < ts.h; idx++ {
-		if idx + ts.viewportTop > len(lines) {
+		if idx+ts.viewportTop > len(lines) {
 			break
 		}
 		cursorGoto(idx, 1)
-		renderLine(lines[idx - 1])
+		renderLine(lines[idx-1])
 	}
 	renderHome(true)
 }
@@ -211,12 +211,13 @@ func (m *message) lCount() int {
 }
 
 // initMSg initializes a message from a user, and renders the initial line.
-func initMsg(id uint32, u user, alreadyLocked bool) {
+func initMsg(id uint32, color uint8, name string, alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
 		defer fmtMu.Unlock()
 	}
 
+	u := user{color, name}
 	abs := 0
 	if len(msgs) != 0 {
 		pm := msgs[len(msgs)-1]
@@ -249,7 +250,7 @@ func appendAndRender(l line) {
 	}
 }
 
-func addToCmdLog(e LRCEvent) {
+func addToCmdLog(e events.LRCEvent) {
 	cmdLog = append(cmdLog, e)
 }
 
@@ -357,7 +358,7 @@ func insertIntoMsg(id uint32, idx uint16, s string) {
 
 	mi, exists := idToMsgIdx[id]
 	if !exists {
-		initMsg(id, user{66, "???"}, true)
+		initMsg(id, 66, "???", true)
 		mi = idToMsgIdx[id]
 	}
 	m := msgs[mi]
@@ -377,7 +378,7 @@ func deleteFromMessage(id uint32, idx uint16) {
 
 	mi, exists := idToMsgIdx[id]
 	if !exists {
-		initMsg(id, user{66, "???"}, true)
+		initMsg(id, 66, "???", true)
 		mi = idToMsgIdx[id]
 	}
 	m := msgs[mi]

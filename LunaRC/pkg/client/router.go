@@ -1,137 +1,134 @@
 package client
 
 import (
-	"encoding/binary"
-	"errors"
 	"io"
 	"log"
+	"lrc"
 	"net"
 	"time"
 )
 
-// EventType determines how a command on the LRC protocol should be interpreted
-type EventType int
-
-const (
-	EventPing       EventType = iota // EventPing is a request for a pong, and if it comes from a server, it can also contain a welcome message
-	EventPong                        // EventPong determines the latency of the connection, and if the connection has closed
-	EventInit                        // EventInit initializes a message
-	EventPub                         // EventPub publishes a message
-	EventInsert                      // EventInsert inserts a character at a specified position in a message
-	EventDelete                      // EventDelete deletes a character at a specified position in a message
-	EventMuteUser                    // EventMuteUser mutes a user based on a message id. only works going forward
-	EventUnmuteUser                  // EventUnmuteUser unmutes a user based on a post id. only works going forward
+var (
+	pingChannel = make(chan struct{})
 )
 
 type LRCCommand struct {
 	n   int
-	buf LRCEvent
+	buf events.LRCEvent
 }
 
-func ConnectToChannel(url string, quit chan struct{}, send chan LRCEvent) net.Conn {
+// ConnectToChannel attempts to connect to a url, and if it succeeds, it sets up a listener, chatter, and pinger, and returns the connection
+func ConnectToChannel(url string, quit chan struct{}, send chan events.LRCEvent) net.Conn {
 	conn, err := dial(url)
 	if err != nil {
 		connectionFailure(url, err)
 		return nil
 	}
 	deNagle(conn)
-	go listen(conn, quit, send)
-	go chat(conn, quit, send)
-	go pinger(send)
+
+	outChan := make(chan events.LRCEvent)
+	readChan := make(chan events.LRCEvent)
+
+	go chat(conn, send, quit)
+	go relayToParser(outChan, quit)
+	go events.Degunker(100, readChan, outChan, quit)
+	go listen(conn, readChan, quit)
+	go pinger(send, quit)
 	return conn
 }
 
-func hangUp(conn net.Conn) {
-	conn.Close()
+func relayToParser(outChan chan events.LRCEvent, quit chan struct{}) {
+	for {
+		select {
+		case <-quit:
+			close(outChan)
+			return
+		case evt, ok := <-outChan:
+			if !ok {
+				return
+			}
+			addToCmdLog(evt)
+			parseCommand(evt)
+		}
+	}
+
 }
 
-func dial(url string) (net.Conn, error) {
-	return net.Dial("tcp",  as.url + ":927")
-}
-
-func deNagle(conn net.Conn) {
-	tcpConn := conn.(*net.TCPConn)
-	tcpConn.SetNoDelay(true)
-}
-
-func listen(conn net.Conn, quit chan struct{}, send chan []byte) {
-	recieve := make(chan LRCEvent, 100)
-	go listenAndRelay(conn, recieve, quit)
+func chat(conn net.Conn, send chan []byte, quit chan struct{}) {
 	for {
 		select {
 		case <-quit:
 			return
-		case cmd := <-recieve:
-			addToCmdLog(cmd)
-			err := parseRead(cmd)
-			if err != nil {
-				close(quit)
+		case msg, ok := <-send:
+			if !ok {
+				return
 			}
+			conn.Write(msg)
 		}
 	}
 }
 
-var PingCommand = LRCEvent([]byte{byte(EventPing)})
-
-var PongCommand = LRCEvent([]byte{byte(EventPong)})
-
-func parseEventType(e LRCEvent) EventType {
-	return EventType(e[4])
-}
-
-func parseRead(buf []byte) error {
+// listen listens for LRCEvents and then acts on them accordingly
+func listen(conn net.Conn, readChan chan []byte, quit chan struct{}) {
+	buf := make([]byte, 1024)
 	for {
-		ml := int(buf[0])
-		if ml == 0 {
-			return errors.New("message length 0")
+		select {
+		case <-quit:
+			return
+		default:
+			n, err := conn.Read(buf)
+			if err != nil {
+				if err != io.EOF {
+					log.Fatal("Read error:", err)
+				} else {
+					log.Println("Server closed")
+				}
+				close(readChan)
+			}
+			e := make([]byte, n)
+			copy(e, buf)
+			readChan <- e
 		}
-		msg := make([]byte, ml - 1)
-		n := copy(msg, buf[1:])
-		if n != ml - 1 {
-			return errors.New("message longer than data")
-		}
-		parseCommand(msg)
-		if len(buf) - ml <= 0 {
-			break
-		}
-		buf = buf[ml:]
 	}
-	return nil
 }
 
-func parseCommand(e LRCEvent) bool {
-	switch parseEventType(e) {
-	case EventPing:
+func parseCommand(e events.LRCEvent) {
+	switch events.ParseEventType(e) {
+	case events.EventPing:
 		if len([]byte(e)) > 5 {
 			setWelcomeMessage(string(e[5:]))
+		} else {
+			setWelcomeMessage("Fail")
 		}
-		return true
-	case EventPong:
+	case events.EventPong:
 		go ponged()
-	case EventInit:
-		initMsg(parseInitEvent(e))
-	case EventPub:
-		pubMsg(parsePubEvent(e))
-	case EventInsert:
-		insertIntoMsg(parseInsertEvent(e))
-	case EventDelete:
-		deleteFromMessage(parseDeleteEvent(e))
+	case events.EventInit:
+		id, color, name := events.ParseInitEvent(e)
+		initMsg(id, color, name, true)
+	case events.EventPub:
+		pubMsg(events.ParsePubEvent(e))
+	case events.EventInsert:
+		insertIntoMsg(events.ParseInsertEvent(e))
+	case events.EventDelete:
+		deleteFromMessage(events.ParseDeleteEvent(e))
 	}
-	return false
 }
 
-var pingChannel = make(chan struct{})
-
-func pinger(send chan LRCEvent) {
+func pinger(send chan events.LRCEvent, quit chan struct{}) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
 	for {
-		ping(send)
-		time.Sleep(time.Second * 5)
+		select {
+		case <-quit:
+		case <-ticker.C:
+			ping(send)
+		}
 	}
 }
 
-func ping(send chan LRCEvent) {
-	p := make([]byte, 1)
-	copy(p, PingCommand)
+func ping(send chan events.LRCEvent) {
+	p := make([]byte, 2)
+	copy(p, events.ClientPing)
 	t0 := time.Now()
 	send <- p
 	<-pingChannel
@@ -143,57 +140,20 @@ func ponged() {
 	pingChannel <- struct{}{}
 }
 
-func parseInitEvent(e LRCEvent) (uint32, user, bool) {
-	return binary.BigEndian.Uint32(e[0:4]), user{e[6], string(e[7:])}, false
+// dial dials the url
+func dial(url string) (net.Conn, error) {
+	return net.Dial("tcp", ":927")
 }
 
-func parsePubEvent(e LRCEvent) uint32 {
-	return binary.BigEndian.Uint32(e[0:4])
-}
-
-func parseInsertEvent(e LRCEvent) (uint32, uint16, string) {
-	return binary.BigEndian.Uint32(e[0:4]), binary.BigEndian.Uint16(e[5:7]), string(e[7])
-}
-
-func parseDeleteEvent(e LRCEvent) (uint32, uint16) {
-	return binary.BigEndian.Uint32(e[0:4]), binary.BigEndian.Uint16(e[5:7])
-}
-
-func chat(conn net.Conn, quit chan struct{}, send chan []byte) {
-	for {
-		select {
-		case <-quit:
-			return
-		case msg := <-send:
-			prependLength(&msg)
-			conn.Write(msg)
-		}
+// hangUp closes the connection if it exists
+func hangUp(conn net.Conn) {
+	if conn != nil {
+		conn.Close()
 	}
 }
 
-type LRCEvent = []byte
-
-func listenAndRelay(conn net.Conn, recieve chan LRCEvent, quit chan struct{}) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			if err != io.EOF {
-				log.Fatal("Read error:", err)
-			} else {
-				log.Println("Server closed")
-			}
-			close(quit)
-		}
-		e := make(LRCEvent, n)
-		copy(e, buf)
-		recieve <- e
-	}
-}
-
-func prependLength(data *[]byte) {
-	l := len(*data) + 1
-	n := make([]byte, 1, l)
-	n[0] = byte(l)
-	*data = append(n, *data...)
+// deNagle disables Nagle's algorithm, causing the connection to send tcp packets as soon as possible at the cost of increasing overhead by not pooling events
+func deNagle(conn net.Conn) {
+	tcpConn := conn.(*net.TCPConn)
+	tcpConn.SetNoDelay(true)
 }

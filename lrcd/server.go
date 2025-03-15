@@ -1,46 +1,52 @@
 package main
 
 import (
-	"encoding/binary"
-	"errors"
 	"fmt"
 	"log"
+	events "lrc"
 	"net"
 	"sync"
 )
 
+// Client is a model for a client's connection, and their evtChannel, the queue of LRCEvents that have yet to be written to the connection
 type Client struct {
 	conn    net.Conn
-	msgChan chan []byte
+	evtChan chan events.LRCEvent
 }
 
-type Msg struct {
+// Evt is a model for an lrc event from a specific client
+type Evt struct {
 	client *Client
-	msg    []byte
+	evt    events.LRCEvent
 }
 
 var (
-	clients    = make(map[*Client]bool)
-	clientToID = make(map[*Client]uint32)
-	lastID     = uint32(0)
-	messages   = make(chan Msg)
-	clientsMu  sync.Mutex
-	prod       bool = false
+	clients      = make(map[*Client]bool)
+	clientToID   = make(map[*Client]uint32)
+	lastID       = uint32(0)
+	eventChannel = make(chan Evt, 100)
+	clientsMu    sync.Mutex
+	prod         bool = false
 )
 
 func main() {
 	log := log.Default()
 	log.Println("Hello, world!")
-	ln, err := net.Listen("tcp",":927")
+	ln, err := net.Listen("tcp", ":927")
 	if err != nil {
 		log.Fatal(err)
 	}
 	defer ln.Close()
+	log.Println("Listening on 927")
 
 	go broadcaster()
-	wm := append([]byte{0, 0, 0, 0, byte(EventPing)}, []byte("Welcome To The Beginning Of The Rest Of Your Life")...)
-	prependLength(&wm)
+	wm := append([]byte{byte(events.EventPing)}, []byte("Welcome To The Beginning Of The Rest Of Your Life")...)
+	wm, _ = events.GenServerEvent(wm, 0)
+	greet(ln, wm)
+}
 
+// greet accepts new connections, and then passes them to the handler
+func greet(ln net.Listener, wm events.LRCServerEvent) {
 	for {
 		conn, err := ln.Accept()
 		if err != nil {
@@ -49,161 +55,138 @@ func main() {
 		}
 		tcpConn := conn.(*net.TCPConn)
 		tcpConn.SetNoDelay(true)
-		go greet(conn, wm)
+		go handle(conn, wm)
 	}
 }
 
-func greet(conn net.Conn, wm []byte) {
+// handle handles the lifetime of a connection (pings it, makes a model for the client, reads from it, and then ultimately removes it when they disconnect)
+func handle(conn net.Conn, wm []byte) {
 	conn.Write(wm)
-	client := &Client{conn: conn, msgChan: make(chan []byte, 100)}
+	logDebug("Greeted new connection!")
+	client := &Client{conn: conn, evtChan: make(chan events.LRCEvent, 100)}
 	clientsMu.Lock()
 	clients[client] = true
 	clientsMu.Unlock()
 
-	go clientWriter(client)
+	var wg sync.WaitGroup
+	readChan := make(chan []byte, 10)
+	outChan := make(chan []byte, 10)
 
-	buf := make([]byte, 1024)
-	for {
-		n, err := conn.Read(buf)
-		if err != nil {
-			break
-		}
-		m := make([]byte, n)
-		copy(m, buf)
-		fmt.Printf("read %x\n", m)
-		err = parseMessages(m, client)
-		if err != nil {
-			break
-		}
-	}
+	quit := make(chan struct{}) //can be closed by degunker if something goes wrong
+
+	wg.Add(4)
+	go func() { defer wg.Done(); clientWriter(client, quit) }()
+	go func() { defer wg.Done(); relayToBroadcaster(client, outChan, quit) }()
+	go func() { defer wg.Done(); events.Degunker(10, readChan, outChan, quit) }()
+	go func() { defer wg.Done(); listenToClient(client, readChan, quit) }()
+	wg.Wait()
+	close(outChan)
+
 	clientsMu.Lock()
 	delete(clients, client)
+	close(client.evtChan)
 	clientsMu.Unlock()
 	conn.Close()
+	logDebug("Closed connection")
 }
 
-func parseMessages(buf []byte, client *Client) error {
+// relayToBroadcaster wrangles the output of degunker into an event that we can send to broadcaster through the global eventChannel.
+// Returns if quit or outChan closes.
+func relayToBroadcaster(client *Client, outChan chan events.LRCEvent, quit chan struct{}) {
 	for {
-		ml := int(buf[0])
-		fmt.Printf("ml = %x\n", buf[0])
-		if ml == 0 {
-			return errors.New("message length 0")
+		select {
+		case <-quit:
+			return
+		case evt, ok := <-outChan:
+			if !ok {
+				return
+			}
+			eventChannel <- Evt{client, evt}
 		}
-		msg := make([]byte, ml - 1)
-		n := copy(msg, buf[1:])
-		if n != ml - 1 {
-			return errors.New("message longer than data")
-		}
-		fmt.Printf("parsed %x\n", msg)
-		messages <- Msg{client, msg}
-		if len(buf) - ml <= 0 {
-			break
-		}
-		buf = buf[ml:]
-	}
-	return nil
-}
-
-func clientWriter(client *Client) {
-	for msg := range client.msgChan {
-		client.conn.Write(msg)
 	}
 }
 
+// listenToClient polls the clients connection and then sends any daya it recieves to the degunker.
+// If the connection closes, it closes readChan, which causes degunker to close quit
+func listenToClient(client *Client, readChan chan []byte, quit chan struct{}) {
+	buf := make([]byte, 1024)
+	for {
+		select {
+		case <-quit:
+			return
+		default:
+			n, err := client.conn.Read(buf)
+			if err != nil {
+				close(readChan)
+				return
+			}
+			m := make([]byte, n)
+			copy(m, buf)
+			logDebug(fmt.Sprintf("read %x", m))
+			readChan <- m
+		}
+	}
+}
+
+// clientWriter takes an event from the clients event channel, and writes it to the tcp connection.
+// If the degunker runs into an error, or if the client's eventChannel closes, then this returns
+func clientWriter(client *Client, quit chan struct{}) {
+	for {
+		select {
+		case <-quit:
+			return
+		case evt, ok := <-client.evtChan:
+			if !ok {
+				return
+			}
+			client.conn.Write(evt)
+		}
+	}
+}
+
+// broadcaster takes an event from the events channel, and broadcasts it to all the connected clients individual event channels
 func broadcaster() {
-	for msg := range messages {
-		if !prod {
-			fmt.Printf("recieved %x from %x\n", msg.msg, msg.client)
-		}
-		id := clientToID[msg.client]
+	for evt := range eventChannel {
+		logDebug(fmt.Sprintf("recieved %x from %x", evt.evt, evt.client))
+		id := clientToID[evt.client]
 		if id == 0 {
-			if isPing(msg.msg) {
-				msg.client.msgChan <- PongCommand
+			if !(events.IsInit(evt.evt) || events.IsPing(evt.evt)) {
+				logDebug(fmt.Sprintf("skipped %x",evt.evt))
 				continue
 			}
-			if !isInit(msg.msg) {
-				fmt.Printf("skipped\n")
-				continue
-			}
-			clientToID[msg.client] = lastID + 1
+			clientToID[evt.client] = lastID + 1
 			lastID += 1
 			id = lastID
 		}
-		if isPing(msg.msg) {
-			msg.client.msgChan <- PongCommand
+		if events.IsPing(evt.evt) {
+			evt.client.evtChan <- events.ServerPong
 			continue
 		}
-		if isPub(msg.msg) {
-			clientToID[msg.client] = 0
+		if events.IsPub(evt.evt) {
+			clientToID[evt.client] = 0
 		}
-		prependId(&msg.msg, id)
-		prependLength(&msg.msg)
+		bevt, _ := events.GenServerEvent(evt.evt, id)
+
 		clientsMu.Lock()
 		for client := range clients {
 			select {
-			case client.msgChan <- msg.msg:
-				if !prod {
-					fmt.Printf("b")
-				}
+			case client.evtChan <- bevt:
+				logDebug(fmt.Sprintf("b %x", bevt))
 			default:
-				if !prod {
-					fmt.Print("k")
+				logDebug("k")
+				err := client.conn.Close()
+				if err != nil {
+					delete(clients, client)
 				}
-				close(client.msgChan)
-				delete(clients, client)
 			}
 		}
-		fmt.Printf("\n")
 		clientsMu.Unlock()
 	}
 }
 
-func prependLength(data *[]byte) {
-	l := len(*data) + 1
-	n := make([]byte, 1, l)
-	n[0] = byte(l)
-	*data = append(n, *data...)
-}
-
-func prependId(data *[]byte, id uint32) {
-	idData := make([]byte, 4)
-	binary.BigEndian.PutUint32(idData, id)
-	*data = append(idData, *data...)
-}
-
-func isInit(data []byte) bool {
-	if len(data) == 0 {
-		return false
+// logDebug debugs unless in production
+func logDebug(s string) {
+	if !prod {
+		log.Println(s)
 	}
-	return data[0] == byte(EventInit)
 }
-
-func isPub(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	return data[0] == byte(EventPub)
-}
-
-func isPing(data []byte) bool {
-	if len(data) == 0 {
-		return false
-	}
-	return data[0] == byte(EventPing)
-}
-
-// EventType determines how a command on the LRC protocol should be interpreted
-type EventType uint8
-
-var PongCommand = []byte{6, 0, 0, 0, 0, 1}
-
-const (
-	EventPing       EventType = iota // EventPing is a request for a pong, and if it comes from a server, it can also contain a welcome message
-	EventPong                        // EventPong determines the latency of the connection, and if the connection has closed
-	EventInit                        // EventInit initializes a message
-	EventPub                         // EventPub publishes a message
-	EventInsert                      // EventInsert inserts a character at a specified position in a message
-	EventDelete                      // EventDelete deletes a character at a specified position in a message
-	EventMuteUser                    // EventMuteUser mutes a user based on a message id. only works going forward
-	EventUnmuteUser                  // EventUnmuteUser unmutes a user based on a post id. only works going forward
-)
