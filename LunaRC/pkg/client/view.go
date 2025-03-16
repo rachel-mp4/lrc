@@ -62,8 +62,7 @@ func InitView() {
 	moth()
 	resetStyles()
 	faint()
-	fmt.Println(`  ...and now you're using LunaRC,
-     an LRC client made by moth11...`)
+	fmt.Print("\r\n  ...and now you're using LunaRC,\r\n     an LRC client made by moth11...")
 	resetStyles()
 	fmtMu.Unlock()
 	resizeChan := make(chan struct{})
