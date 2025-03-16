@@ -281,7 +281,7 @@ func dumpCmdLog() {
 	clearAll()
 	cursorHome()
 	for _, v := range cmdLog {
-		fmt.Printf("%x\n", v)
+		fmt.Printf("%x\r\n", v)
 	}
 }
 
@@ -477,10 +477,10 @@ func deleteFromMyMessage(idx uint16) {
 }
 
 func connectionFailure(to string, err error) {
-	fmt.Print("\nFailed to connect")
+	fmt.Print("\r\nFailed to connect")
 	if to != "" {
 		fmt.Printf(" to %s", to)
 	}
-	fmt.Print("\n" + err.Error())
+	fmt.Print("\r\n" + err.Error())
 	panic(err)
 }
