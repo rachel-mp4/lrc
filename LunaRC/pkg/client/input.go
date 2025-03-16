@@ -68,7 +68,7 @@ quitloop:
 
 func inputMenuNormal(buf []byte, quit chan struct{}, send chan events.LRCEvent) net.Conn {
 	switch buf[0] {
-	case newline():
+	case 10, 13:
 		conn := ConnectToChannel(as.url, quit, send)
 		if conn != nil {
 			is = chanNormal
@@ -90,7 +90,7 @@ func switchToMenuInsert() {
 
 func inputMenuInsert(buf []byte, quit chan struct{}, send chan events.LRCEvent) {
 	switch buf[0] {
-	case newline():
+	case 10, 13:
 		evaluateCommandBuffer(quit, send)
 		switchToMenuNormal()
 	case 27:
@@ -153,7 +153,7 @@ func inputChanNormal(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 				cmdBuffer = string(cmdBuffer[:len(cmdBuffer)-1])
 				renderPartialName()
 			}
-		} else if buf[0] == newline() {
+		} else if buf[0] == 10 || buf[0] == 13 {
 			setNameTo()
 		}
 	case color:
@@ -167,7 +167,7 @@ func inputChanNormal(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 				cmdBuffer = string(cmdBuffer[:len(cmdBuffer)-1])
 				renderPartialColor()
 			}
-		} else if buf[0] == newline() {
+		} else if buf[0] == 10 || buf[0] == 13 {
 			setMyColorTo()
 		}
 	}
@@ -255,7 +255,7 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 			cursor = cursor - 1
 			wordL = wordL - 1
 		}
-	} else if buf[0] == newline() {
+	} else if buf[0] == 10 || buf[0] == 13 {
 		if cursor != math.MaxUint16 {
 			cursor = math.MaxUint16
 			send <- events.GenPubEvent()
