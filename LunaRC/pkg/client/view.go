@@ -16,6 +16,7 @@ var (
 	lines      []line
 	fmtMu      sync.Mutex
 	cmdLog     []events.LRCEvent
+	myMsgIdx   int
 )
 
 type appState struct {
@@ -211,10 +212,15 @@ func (m *message) lCount() int {
 }
 
 // initMSg initializes a message from a user, and renders the initial line.
-func initMsg(id uint32, color uint8, name string, alreadyLocked bool) {
+func initMsg(id uint32, color uint8, name string, alreadyLocked bool, isFromMe bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
 		defer fmtMu.Unlock()
+	}
+
+	if isFromMe {
+		idToMsgIdx[id] = -1
+		return
 	}
 
 	u := user{color, name}
@@ -226,6 +232,23 @@ func initMsg(id uint32, color uint8, name string, alreadyLocked bool) {
 	m := message{&u, "", true, abs}
 	l := line{&m, 0}
 	idToMsgIdx[id] = len(msgs)
+	msgs = append(msgs, &m)
+	appendAndRender(l)
+}
+
+func initMyMsg(color uint8, name string) {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	u := user{color,name}
+	abs := 0
+	if len(msgs) != 0 {
+		pm := msgs[len(msgs)-1]
+		abs = pm.absPos + pm.lCount()
+	}
+	m := message{&u, "", true, abs}
+	l := line{&m, 0}
+	myMsgIdx = len(msgs)
 	msgs = append(msgs, &m)
 	appendAndRender(l)
 }
@@ -271,7 +294,32 @@ func pubMsg(id uint32) {
 	fmtMu.Lock()
 	defer fmtMu.Unlock()
 
-	m := msgs[idToMsgIdx[id]]
+	mi, ok := idToMsgIdx[id]
+	if !ok {
+		return
+	}
+	if mi < 0 {
+		return
+	}
+
+	m := msgs[mi]
+	m.active = false
+	fliv := findFLInViewport(m)
+	if fliv == -1 {
+		return
+	} else {
+		for idx := fliv; checkLinesIdxIsM(idx, m); idx++ {
+			cursorGoto(idx-ts.viewportTop+1, 1)
+			renderLine(lines[idx])
+		}
+	}
+}
+
+func pubMyMsg() {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	m := msgs[myMsgIdx]
 	m.active = false
 	fliv := findFLInViewport(m)
 	if fliv == -1 {
@@ -358,9 +406,29 @@ func insertIntoMsg(id uint32, idx uint16, s string) {
 
 	mi, exists := idToMsgIdx[id]
 	if !exists {
-		initMsg(id, 66, "???", true)
+		initMsg(id, 66, "???", true, false)
 		mi = idToMsgIdx[id]
 	}
+	if mi < 0 {
+		return
+	}
+
+	m := msgs[mi]
+	l := len(m.text)
+	if l == int(idx) {
+		appendTo(m, s, mi)
+	} else if l > int(idx) {
+		insertInto(m, idx, s, mi)
+	} else {
+		lateInsertInto(m, idx, s, mi)
+	}
+}
+
+func insertIntoMyMsg(idx uint16, s string) {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	mi := myMsgIdx
 	m := msgs[mi]
 	l := len(m.text)
 	if l == int(idx) {
@@ -378,9 +446,27 @@ func deleteFromMessage(id uint32, idx uint16) {
 
 	mi, exists := idToMsgIdx[id]
 	if !exists {
-		initMsg(id, 66, "???", true)
+		initMsg(id, 66, "???", true, false)
 		mi = idToMsgIdx[id]
 	}
+	if mi < 0 {
+		return
+	}
+
+	m := msgs[mi]
+	l := len(m.text)
+	if l == int(idx) {
+		truncFrom(m, mi)
+	} else if l > int(idx) {
+
+	}
+}
+
+func deleteFromMyMessage(idx uint16) {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	mi := myMsgIdx
 	m := msgs[mi]
 	l := len(m.text)
 	if l == int(idx) {

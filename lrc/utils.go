@@ -113,8 +113,8 @@ func ParseEventType(e LRCEvent) EventType {
 	return EventType(e[4])
 }
 
-func ParseInitEvent(e LRCEvent) (uint32, uint8, string) {
-	return binary.BigEndian.Uint32(e[0:4]), e[6], string(e[7:])
+func ParseInitEvent(e LRCEvent) (uint32, uint8, string, bool) {
+	return binary.BigEndian.Uint32(e[0:4]), e[6], string(e[7:]), e[5]==1
 }
 
 func ParsePubEvent(e LRCEvent) uint32 {

@@ -165,12 +165,16 @@ func broadcaster() {
 		if events.IsPub(evt.evt) {
 			clientToID[evt.client] = 0
 		}
-		bevt, _ := events.GenServerEvent(evt.evt, id)
+		bevt, eevt := events.GenServerEvent(evt.evt, id)
 
 		clientsMu.Lock()
 		for client := range clients {
+			evtToSend := bevt
+			if client == evt.client {
+				evtToSend = eevt
+			}
 			select {
-			case client.evtChan <- bevt:
+			case client.evtChan <- evtToSend:
 				logDebug(fmt.Sprintf("b %x", bevt))
 			default:
 				logDebug("k")

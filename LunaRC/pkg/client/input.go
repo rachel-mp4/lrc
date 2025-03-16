@@ -241,14 +241,17 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 			cursor = 0
 			send <- events.GenInitEvent(as.color,as.name)
 			wordL = 0
+			initMyMsg(as.color, as.name)
 		}
 		send <- events.GenInsertEvent(cursor, string(buf[0]))
+		insertIntoMyMsg(cursor, string(buf[0]))
 		cursor = cursor + 1
 		wordL = wordL - 1
 
 	} else if buf[0] == 127 {
 		if cursor > 0 && cursor != math.MaxUint16 {
 			send <- events.GenDeleteEvent(cursor)
+			deleteFromMyMessage(cursor)
 			cursor = cursor - 1
 			wordL = wordL - 1
 		}
@@ -256,6 +259,7 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 		if cursor != math.MaxUint16 {
 			cursor = math.MaxUint16
 			send <- events.GenPubEvent()
+			pubMyMsg()
 			wordL = 0
 		}
 	}

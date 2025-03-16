@@ -103,8 +103,8 @@ func parseCommand(e events.LRCEvent) {
 	case events.EventPong:
 		go ponged()
 	case events.EventInit:
-		id, color, name := events.ParseInitEvent(e)
-		initMsg(id, color, name, true)
+		id, color, name, isFromMe := events.ParseInitEvent(e)
+		initMsg(id, color, name, true, isFromMe)
 	case events.EventPub:
 		pubMsg(events.ParsePubEvent(e))
 	case events.EventInsert:
@@ -142,7 +142,7 @@ func ponged() {
 
 // dial dials the url
 func dial(url string) (net.Conn, error) {
-	return net.Dial("tcp", ":927")
+	return net.Dial("tcp", url + ":927")
 }
 
 // hangUp closes the connection if it exists
