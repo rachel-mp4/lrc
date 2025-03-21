@@ -32,7 +32,7 @@ type terminalState struct {
 	h              int
 	viewportTop    int
 	viewportBottom int
-	cpl            int
+	cpl            int //characters per line
 }
 
 type user struct {
@@ -56,7 +56,15 @@ func InitView() {
 	recallApplicationState()
 	getTerminalSize()
 	fmtMu.Lock()
-	cursorDisplayInsert()
+	renderSplash()
+	fmtMu.Unlock()
+	resizeChan := make(chan struct{})
+	listenForResize(resizeChan)
+	go resize(resizeChan)
+}
+
+func renderSplash() {
+	cursorBlock()
 	clearAll()
 	setColor(as.color)
 	moth()
@@ -64,10 +72,6 @@ func InitView() {
 	faint()
 	fmt.Print("\r\n  ...and now you're using LunaRC,\r\n     an LRC client made by moth11...")
 	resetStyles()
-	fmtMu.Unlock()
-	resizeChan := make(chan struct{})
-	listenForResize(resizeChan)
-	go resize(resizeChan)
 }
 
 func initChan() {
@@ -101,8 +105,14 @@ func resize(resizeChan chan struct{}) {
 	}
 }
 
+// TODO recalculate line breaks on change width
 func fixAfterResize() {
-	rerender()
+	if is == menuInsert || is == menuNormal {
+		cursorHome()
+		renderSplash()
+	} else {
+		rerender()
+	}
 }
 
 func setPingTo(ms int) {
@@ -133,6 +143,7 @@ func homeStyle() {
 	}
 }
 
+// renderPing renders the ping in the bottom right
 func renderPing(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -145,6 +156,7 @@ func renderPing(alreadyLocked bool) {
 	resetStyles()
 }
 
+// renderWelcomeMessage renders the welcomeMessage in the bottom middle
 func renderWelcomeMessage(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -157,6 +169,7 @@ func renderWelcomeMessage(alreadyLocked bool) {
 	resetStyles()
 }
 
+// renderUrl renders the url, with the protocol that the connection is occuring over
 func renderUrl(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -168,6 +181,7 @@ func renderUrl(alreadyLocked bool) {
 	resetStyles()
 }
 
+// renderHome renders the bottom row
 func renderHome(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -190,6 +204,8 @@ func renderHome(alreadyLocked bool) {
 	}
 }
 
+// rerender should rerender every line in viewport correctly
+// TODO investigate bugs with scrolling
 func rerender() {
 	fmtMu.Lock()
 	defer fmtMu.Unlock()
@@ -201,11 +217,12 @@ func rerender() {
 			break
 		}
 		cursorGoto(idx, 1)
-		renderLine(lines[idx-1])
+		renderLine(lines[idx-1+ts.viewportTop])
 	}
 	renderHome(true)
 }
 
+// lcount counts how many lines are in a message, 1-indexed
 func (m *message) lCount() int {
 	return len(m.text)/ts.cpl + 1
 }
@@ -222,6 +239,19 @@ func initMsg(id uint32, color uint8, name string, alreadyLocked bool, isFromMe b
 		return
 	}
 
+	idToMsgIdx[id] = len(msgs)
+	initAMsg(color, name)
+}
+
+func initMyMsg(color uint8, name string) {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	myMsgIdx = len(msgs)
+	initAMsg(color, name)
+}
+
+func initAMsg(color uint8, name string) {
 	u := user{color, name}
 	abs := 0
 	if len(msgs) != 0 {
@@ -230,24 +260,6 @@ func initMsg(id uint32, color uint8, name string, alreadyLocked bool, isFromMe b
 	}
 	m := message{&u, "", true, abs}
 	l := line{&m, 0}
-	idToMsgIdx[id] = len(msgs)
-	msgs = append(msgs, &m)
-	appendAndRender(l)
-}
-
-func initMyMsg(color uint8, name string) {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
-
-	u := user{color,name}
-	abs := 0
-	if len(msgs) != 0 {
-		pm := msgs[len(msgs)-1]
-		abs = pm.absPos + pm.lCount()
-	}
-	m := message{&u, "", true, abs}
-	l := line{&m, 0}
-	myMsgIdx = len(msgs)
 	msgs = append(msgs, &m)
 	appendAndRender(l)
 }
@@ -272,6 +284,11 @@ func appendAndRender(l line) {
 	}
 }
 
+// the viewport is full if the top of the viewport + the height of the viewport = the length of lines
+func viewportFull() bool {
+	return ts.viewportTop+ts.h-1 == len(lines)
+}
+
 func addToCmdLog(e events.LRCEvent) {
 	cmdLog = append(cmdLog, e)
 }
@@ -284,11 +301,6 @@ func dumpCmdLog() {
 	}
 }
 
-// the viewport is full if the top of the viewport + the height of the viewport = the length of lines
-func viewportFull() bool {
-	return ts.viewportTop+ts.h-1 == len(lines)
-}
-
 func pubMsg(id uint32) {
 	fmtMu.Lock()
 	defer fmtMu.Unlock()
@@ -297,10 +309,21 @@ func pubMsg(id uint32) {
 	if !ok {
 		return
 	}
-	if mi < 0 {
+	if mi < 0 { //this is a message that originated from me
 		return
 	}
 
+	pubAMsg(mi)
+}
+
+func pubMyMsg() {
+	fmtMu.Lock()
+	defer fmtMu.Unlock()
+
+	pubAMsg(myMsgIdx)
+}
+
+func pubAMsg(mi int) {
 	m := msgs[mi]
 	m.active = false
 	fliv := findFLInViewport(m)
@@ -314,23 +337,8 @@ func pubMsg(id uint32) {
 	}
 }
 
-func pubMyMsg() {
-	fmtMu.Lock()
-	defer fmtMu.Unlock()
-
-	m := msgs[myMsgIdx]
-	m.active = false
-	fliv := findFLInViewport(m)
-	if fliv == -1 {
-		return
-	} else {
-		for idx := fliv; checkLinesIdxIsM(idx, m); idx++ {
-			cursorGoto(idx-ts.viewportTop+1, 1)
-			renderLine(lines[idx])
-		}
-	}
-}
-
+// checkLinesIdxIsM takes an absolute line number, and determines if it belongs to m. 
+// If there is no line, with abspos=idx, this returns false.
 func checkLinesIdxIsM(idx int, m *message) bool {
 	if idx >= len(lines) {
 		return false
@@ -338,6 +346,7 @@ func checkLinesIdxIsM(idx int, m *message) bool {
 	return lines[idx].from == m
 }
 
+// findFLInViewport returns the least absolute position of a line in viewport that belongs to m
 func findFLInViewport(m *message) int {
 	for i := ts.viewportTop; i <= ts.viewportBottom; i++ {
 		if i >= len(lines) {
@@ -354,6 +363,7 @@ func findAbsoluteLineNumberOf(msg *message, lnum int) int {
 	return msg.absPos + lnum + 1
 }
 
+// updateAbsoluteLineNumbersAfter takes a message index idx, and updates all messages after (and not including) the idx by an amount
 func updateAbsoluteLineNumbersAfter(idx int, by int) {
 	for i := idx + 1; i < len(msgs); i++ {
 		msgs[i].absPos += by
@@ -361,6 +371,7 @@ func updateAbsoluteLineNumbersAfter(idx int, by int) {
 }
 
 // move cursor down from vim
+// TODO investigate bug on rerender, possibly caused by scrolling viewport
 func scrollViewportUp(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -412,15 +423,7 @@ func insertIntoMsg(id uint32, idx uint16, s string) {
 		return
 	}
 
-	m := msgs[mi]
-	l := len(m.text)
-	if l == int(idx) {
-		appendTo(m, s, mi)
-	} else if l > int(idx) {
-		insertInto(m, idx, s, mi)
-	} else {
-		lateInsertInto(m, idx, s, mi)
-	}
+	insertIntoAMsg(mi, idx, s)
 }
 
 func insertIntoMyMsg(idx uint16, s string) {
@@ -428,6 +431,10 @@ func insertIntoMyMsg(idx uint16, s string) {
 	defer fmtMu.Unlock()
 
 	mi := myMsgIdx
+	insertIntoAMsg(mi, idx, s)
+}
+
+func insertIntoAMsg(mi int, idx uint16, s string) {
 	m := msgs[mi]
 	l := len(m.text)
 	if l == int(idx) {
@@ -452,13 +459,7 @@ func deleteFromMessage(id uint32, idx uint16) {
 		return
 	}
 
-	m := msgs[mi]
-	l := len(m.text)
-	if l == int(idx) {
-		truncFrom(m, mi)
-	} else if l > int(idx) {
-
-	}
+	deleteFromAMessage(mi, idx)
 }
 
 func deleteFromMyMessage(idx uint16) {
@@ -466,6 +467,10 @@ func deleteFromMyMessage(idx uint16) {
 	defer fmtMu.Unlock()
 
 	mi := myMsgIdx
+	deleteFromAMessage(mi, idx)
+}
+
+func deleteFromAMessage(mi int, idx uint16) {
 	m := msgs[mi]
 	l := len(m.text)
 	if l == int(idx) {

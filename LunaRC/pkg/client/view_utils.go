@@ -9,16 +9,6 @@ func moth() {
 	fmt.Println("  %%%%%%%\r\n %%%%%%%%%%  %%%            %   %           %%%%%%%%\r\n   %%%%%%%%%%%%%%%%%        %%%%     %%%%%%%%%%%%%%%%%%\r\n     %%%%%%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%%%%%%\r\n       %%%%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%%%\r\n            %%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%%%%%%%%\r\n         %%%%%%%%%%%%%%%%%%% %% %%%%%%%%%%%%%%\r\n       %%%%%%%%%%%%%%%%%%%%%    %%%%%%%%%%%%%%%%%%\r\n          %%%%%%%%%%%%         %%%%%%%%%%%%%%%%\r\n             %%%%%               %%%%%%%%%\r\n                                    %")
 }
 
-func renderLineTop(l line) {
-	cursorHome()
-	renderLine(l)
-}
-
-func renderLineBottom(l line) {
-	cursorGoto(ts.h-1, 1)
-	renderLine(l)
-}
-
 func appendToLine(l line, s string) {
 	if l.from.active {
 		setColor(l.from.user.c)
@@ -137,18 +127,6 @@ func inverted() {
 	fmt.Printf("\033[7m")
 }
 
-func cursorDisplayNormal() {
-	fmt.Print("\033[5 q")
-}
-
-func cursorDisplayInsert() {
-	fmt.Print("\033[1 q")
-}
-
-func yellow() {
-	fmt.Print("\033[33m")
-}
-
 func clearAll() {
 	fmt.Print("\033[2J")
 	cursorHome()
@@ -172,16 +150,8 @@ func scrollUp() {
 	fmt.Print("\033[1S")
 }
 
-func cursorUp() {
-	fmt.Print("\033[A")
-}
-
 func cursorFullLeft() {
 	fmt.Print("\033[1G")
-}
-
-func cursorDown() {
-	fmt.Print("\033[B")
 }
 
 func cursorBeginLine() {
