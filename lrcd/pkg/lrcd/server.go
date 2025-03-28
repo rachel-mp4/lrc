@@ -1,6 +1,7 @@
 package lrcd
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -11,12 +12,14 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
 
 type Server struct {
+	started      bool
 	tcpserver    *tcpserver
 	wsserver     *wsserver
 	clients      map[*client]bool
@@ -129,17 +132,18 @@ func NewServer(opts ...Option) (*Server, error) {
 	e := append([]byte{byte(events.EventPing)}, []byte(welcomeString)...)
 	wm, _ := events.GenServerEvent(e, 0)
 	server.welcomeEvt = wm
+	return &server, nil
+}
 
+func (server *Server) Start() error {
+	if server.started {
+		return errors.New("cannot start already started server")
+	}
 	server.clients = make(map[*client]bool)
 	server.clientsMu = sync.Mutex{}
 	server.clientToID = make(map[*client]uint32)
 	server.lastID = 0
 	server.eventChannel = make(chan evt, 100)
-
-	return &server, nil
-}
-
-func (server *Server) Start() error {
 	go server.broadcaster()
 	server.logDebug("Hello, world!")
 	if server.tcpserver != nil {
@@ -167,18 +171,32 @@ func (server *Server) Start() error {
 		}()
 		server.log("listening on ws/" + strconv.Itoa(server.wsserver.port))
 	}
+	server.started = true
 	return nil
 }
 
-func (server *Server) Stop() {
-
+func (server *Server) Stop() error {
+	if !server.started {
+		return errors.New("cannot stop already stopped server")
+	}
+	if server.tcpserver != nil {
+		(*server.tcpserver.nl).Close()
+	}
+	if server.wsserver != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.wsserver.server.Shutdown(ctx)
+	}
+	close(server.eventChannel)
+	server.logDebug("Goodbye world :c")
+	return nil
 }
 
 // Client is a model for a client's connection, and their evtChannel, the queue of LRCEvents that have yet to be written to the connection
 type client struct {
-	tcpconn  *net.Conn
-	wsconn   *websocket.Conn
-	evtChan  chan events.LRCEvent
+	tcpconn *net.Conn
+	wsconn  *websocket.Conn
+	evtChan chan events.LRCEvent
 }
 
 // Evt is a model for an lrc event from a specific client
@@ -310,7 +328,7 @@ func clientWriter(client *client, quit chan struct{}) {
 		select {
 		case <-quit:
 			return
-		case evt, ok := <- client.evtChan:
+		case evt, ok := <-client.evtChan:
 			if !ok {
 				return
 			}
@@ -332,7 +350,7 @@ func (server *Server) listenToWS(client *client) {
 
 func wsWriter(client client) {
 	for {
-		evt, ok := <- client.evtChan
+		evt, ok := <-client.evtChan
 		if !ok {
 			return
 		}
@@ -386,7 +404,7 @@ func (server *Server) broadcaster() {
 						//TODO help chat
 					}
 				}
-				delete(server.clients,client)
+				delete(server.clients, client)
 			}
 		}
 		server.clientsMu.Unlock()
