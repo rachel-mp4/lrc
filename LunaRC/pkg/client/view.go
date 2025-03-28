@@ -128,7 +128,7 @@ func setWelcomeMessage(s string) {
 }
 
 func spaceForWelcome() bool {
-	return (14 + len(as.welcome) + len(as.url)) <= ts.w
+	return (16 + len(as.welcome) + len(as.url)) <= ts.w
 }
 
 func homeStyle() {
@@ -159,7 +159,7 @@ func renderCurrentConnected(alreadyLocked bool) {
 		defer fmtMu.Unlock()
 	}
 
-	cursorGoto(ts.h, ts.w-5)
+	cursorGoto(ts.h, ts.w-6)
 	homeStyle()
 	fmt.Printf("%d", as.currentConnected)
 	resetStyles()
@@ -171,7 +171,7 @@ func renderWelcomeMessage(alreadyLocked bool) {
 		defer fmtMu.Unlock()
 	}
 
-	cursorGoto(ts.h, ts.w-6-len(as.welcome))
+	cursorGoto(ts.h, ts.w-7-len(as.welcome))
 	homeStyle()
 	fmt.Print(as.welcome)
 	resetStyles()

@@ -9,7 +9,7 @@ import (
 )
 
 var (
-	pingChannel = make(chan []byte)
+	pingChannel = make(chan struct{})
 )
 
 type LRCCommand struct {
@@ -101,7 +101,8 @@ func parseCommand(e events.LRCEvent) {
 			setWelcomeMessage("Fail")
 		}
 	case events.EventPong:
-		go ponged(e)
+		go ponged()
+		setCurrentConnected(int(e[5]))
 	case events.EventInit:
 		id, color, name, isFromMe := events.ParseInitEvent(e)
 		initMsg(id, color, name, true, isFromMe)
@@ -115,6 +116,7 @@ func parseCommand(e events.LRCEvent) {
 }
 
 func pinger(send chan events.LRCEvent, quit chan struct{}) {
+	ping(send)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -131,14 +133,13 @@ func ping(send chan events.LRCEvent) {
 	copy(p, events.ClientPing)
 	t0 := time.Now()
 	send <- p
-	msg := <-pingChannel
-	setCurrentConnected(int(msg[3]))
+	<-pingChannel
 	t1 := time.Now()
 	setPingTo(int(t1.Sub(t0).Milliseconds()))
 }
 
-func ponged(e []byte) {
-	pingChannel <- e
+func ponged() {
+	pingChannel <- struct{}{}
 }
 
 // dial dials the url

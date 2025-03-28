@@ -15,8 +15,7 @@ type LRCServerEvent = []byte
 type EventType uint8
 
 func ServerPongWithClientCount(numOfClients uint8) []byte {
-	// why 6 bytes
-	return []byte{6, 0, 0, 0, numOfClients, 1}
+	return []byte{7, 0, 0, 0, 0, 1, numOfClients}
 }
 
 var ServerPong = []byte{6, 0, 0, 0, 0, 1}
