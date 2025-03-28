@@ -14,6 +14,11 @@ type LRCServerEvent = []byte
 // EventType determines how a command on the LRC protocol should be interpreted
 type EventType uint8
 
+func ServerPongWithClientCount(numOfClients uint8) []byte {
+	// why 6 bytes
+	return []byte{6, 0, 0, 0, numOfClients, 1}
+}
+
 var ServerPong = []byte{6, 0, 0, 0, 0, 1}
 var ServerPing = []byte{6, 0, 0, 0, 0, 1}
 var ClientPong = []byte{2, 1}
@@ -29,6 +34,17 @@ const (
 	EventMuteUser                    // EventMuteUser mutes a user based on a message id. only works going forward
 	EventUnmuteUser                  // EventUnmuteUser unmutes a user based on a post id. only works going forward
 )
+
+var EventNameMap = map[EventType]string{
+	EventPing:       "Ping",
+	EventPong:       "Pong",
+	EventInit:       "Init",
+	EventPub:        "Pub",
+	EventInsert:     "Insert",
+	EventDelete:     "Delete",
+	EventMuteUser:   "MuteUser",
+	EventUnmuteUser: "UnmuteUser",
+}
 
 // IsPing returns true if e is a ping event
 func IsPing(td LRCTypedData) bool {
@@ -114,7 +130,7 @@ func ParseEventType(e LRCEvent) EventType {
 }
 
 func ParseInitEvent(e LRCEvent) (uint32, uint8, string, bool) {
-	return binary.BigEndian.Uint32(e[0:4]), e[6], string(e[7:]), e[5]==1
+	return binary.BigEndian.Uint32(e[0:4]), e[6], string(e[7:]), e[5] == 1
 }
 
 func ParsePubEvent(e LRCEvent) uint32 {

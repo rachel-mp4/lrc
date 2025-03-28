@@ -2,10 +2,11 @@ package client
 
 import (
 	"fmt"
-	"golang.org/x/term"
-	"lrc"
+	events "lrc"
 	"os"
 	"sync"
+
+	"golang.org/x/term"
 )
 
 var (
@@ -20,11 +21,12 @@ var (
 )
 
 type appState struct {
-	url     string
-	welcome string
-	ping    int
-	color   uint8
-	name    string
+	url              string
+	welcome          string
+	ping             int
+	currentConnected int
+	color            uint8
+	name             string
 }
 
 type terminalState struct {
@@ -80,7 +82,7 @@ func initChan() {
 
 // TODO store and read from file
 func recallApplicationState() {
-	as = appState{"moth11.net", as.welcome, 0, 13, "wanderer"}
+	as = appState{"localhost", as.welcome, 0, 0, 13, "wanderer"}
 }
 
 func getTerminalSize() {
@@ -103,6 +105,11 @@ func resize(resizeChan chan struct{}) {
 
 func fixAfterResize() {
 	rerender()
+}
+
+func setCurrentConnected(n int) {
+	as.currentConnected = n
+	renderCurrentConnected(false)
 }
 
 func setPingTo(ms int) {
@@ -133,6 +140,7 @@ func homeStyle() {
 	}
 }
 
+// TODO: Change to also display current connected clients
 func renderPing(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
@@ -145,13 +153,25 @@ func renderPing(alreadyLocked bool) {
 	resetStyles()
 }
 
+func renderCurrentConnected(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
+
+	cursorGoto(ts.h, ts.w-5)
+	homeStyle()
+	fmt.Printf("%d", as.currentConnected)
+	resetStyles()
+}
+
 func renderWelcomeMessage(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
 		defer fmtMu.Unlock()
 	}
 
-	cursorGoto(ts.h, ts.w-5-len(as.welcome))
+	cursorGoto(ts.h, ts.w-6-len(as.welcome))
 	homeStyle()
 	fmt.Print(as.welcome)
 	resetStyles()
@@ -182,6 +202,7 @@ func renderHome(alreadyLocked bool) {
 	if spaceForWelcome() {
 		renderWelcomeMessage(true)
 	}
+	renderCurrentConnected(true)
 	renderPing(true)
 	if is == chanInsert {
 		cursorBar()
@@ -239,7 +260,7 @@ func initMyMsg(color uint8, name string) {
 	fmtMu.Lock()
 	defer fmtMu.Unlock()
 
-	u := user{color,name}
+	u := user{color, name}
 	abs := 0
 	if len(msgs) != 0 {
 		pm := msgs[len(msgs)-1]

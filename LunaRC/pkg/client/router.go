@@ -3,13 +3,13 @@ package client
 import (
 	"io"
 	"log"
-	"lrc"
+	events "lrc"
 	"net"
 	"time"
 )
 
 var (
-	pingChannel = make(chan struct{})
+	pingChannel = make(chan []byte)
 )
 
 type LRCCommand struct {
@@ -101,7 +101,7 @@ func parseCommand(e events.LRCEvent) {
 			setWelcomeMessage("Fail")
 		}
 	case events.EventPong:
-		go ponged()
+		go ponged(e)
 	case events.EventInit:
 		id, color, name, isFromMe := events.ParseInitEvent(e)
 		initMsg(id, color, name, true, isFromMe)
@@ -131,18 +131,19 @@ func ping(send chan events.LRCEvent) {
 	copy(p, events.ClientPing)
 	t0 := time.Now()
 	send <- p
-	<-pingChannel
+	msg := <-pingChannel
+	setCurrentConnected(int(msg[3]))
 	t1 := time.Now()
 	setPingTo(int(t1.Sub(t0).Milliseconds()))
 }
 
-func ponged() {
-	pingChannel <- struct{}{}
+func ponged(e []byte) {
+	pingChannel <- e
 }
 
 // dial dials the url
 func dial(url string) (net.Conn, error) {
-	return net.Dial("tcp", url + ":927")
+	return net.Dial("tcp", url+":927")
 }
 
 // hangUp closes the connection if it exists
