@@ -70,7 +70,7 @@ func IsInit(td LRCTypedData) bool {
 }
 
 // GenServerEvent returns an LRCServerEvent from data and an id
-func GenServerEvent(data LRCTypedData, id uint32) (LRCServerEvent, LRCServerEvent) {
+func GenServerEvent(data LRCTypedData, id uint32) (broadcastEvent LRCServerEvent, echoedEvent LRCServerEvent) {
 	se := make([]byte, 4)
 	binary.BigEndian.PutUint32(se, id)
 	se = append(se, data...)

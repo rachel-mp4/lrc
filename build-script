@@ -15,7 +15,7 @@ for platform in "${platforms[@]}"; do
     output="lrcd-$GOOS-$GOARCH"
     [ "$GOOS" = "windows" ] && output+=".exe"
     echo "Building lrcd for $GOOS/$GOARCH..."
-    GOOS=$GOOS GOARCH=$GOARCH go build -o $output .
+    GOOS=$GOOS GOARCH=$GOARCH go build -o $output ./cmd
 done
 
 echo "Done!"
