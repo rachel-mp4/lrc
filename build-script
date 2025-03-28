@@ -1,0 +1,21 @@
+#!/bin/bash
+
+platforms=("windows/amd64" "darwin/amd64" "darwin/arm64" "linux/amd64")
+
+cd ./lrcd
+
+for platform in "${platforms[@]}"; do
+    cd ../LunaRC
+    IFS="/" read -r GOOS GOARCH <<< "$platform"
+    output="LunaRC-$GOOS-$GOARCH"
+    [ "$GOOS" = "windows" ] && output+=".exe"
+    echo "Building LunaRC for $GOOS/$GOARCH..."
+    GOOS=$GOOS GOARCH=$GOARCH go build -o $output ./cmd
+    cd ../lrcd
+    output="lrcd-$GOOS-$GOARCH"
+    [ "$GOOS" = "windows" ] && output+=".exe"
+    echo "Building lrcd for $GOOS/$GOARCH..."
+    GOOS=$GOOS GOARCH=$GOARCH go build -o $output .
+done
+
+echo "Done!"
