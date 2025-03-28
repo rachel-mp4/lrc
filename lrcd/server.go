@@ -20,6 +20,13 @@ type Evt struct {
 	evt    events.LRCEvent
 }
 
+func (t Evt) parseEvent() string {
+	if len(t.evt) < 5 {
+		return ""
+	}
+	return fmt.Sprintf("[%x]", t.evt)
+}
+
 var (
 	clients      = make(map[*Client]bool)
 	clientToID   = make(map[*Client]uint32)
@@ -45,6 +52,7 @@ func main() {
 	greet(ln, wm)
 }
 
+// Entrypoint
 // greet accepts new connections, and then passes them to the handler
 func greet(ln net.Listener, wm events.LRCServerEvent) {
 	for {
@@ -151,7 +159,7 @@ func broadcaster() {
 		id := clientToID[evt.client]
 		if id == 0 {
 			if !(events.IsInit(evt.evt) || events.IsPing(evt.evt)) {
-				logDebug(fmt.Sprintf("skipped %x",evt.evt))
+				logDebug(fmt.Sprintf("skipped %x", evt.evt))
 				continue
 			}
 			clientToID[evt.client] = lastID + 1
@@ -159,7 +167,7 @@ func broadcaster() {
 			id = lastID
 		}
 		if events.IsPing(evt.evt) {
-			evt.client.evtChan <- events.ServerPong
+			evt.client.evtChan <- events.ServerPongWithClientCount(uint8(len(clients)))
 			continue
 		}
 		if events.IsPub(evt.evt) {

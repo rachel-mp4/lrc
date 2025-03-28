@@ -2,10 +2,11 @@ package client
 
 import (
 	"fmt"
-	"golang.org/x/term"
-	"lrc"
+	events "lrc"
 	"os"
 	"sync"
+
+	"golang.org/x/term"
 )
 
 var (
@@ -20,11 +21,12 @@ var (
 )
 
 type appState struct {
-	url     string
-	welcome string
-	ping    int
-	color   uint8
-	name    string
+	url              string
+	welcome          string
+	ping             int
+	currentConnected int
+	color            uint8
+	name             string
 }
 
 type terminalState struct {
@@ -84,7 +86,7 @@ func initChan() {
 
 // TODO store and read from file
 func recallApplicationState() {
-	as = appState{"moth11.net", as.welcome, 0, 13, "wanderer"}
+	as = appState{"localhost", as.welcome, 0, 0, 13, "wanderer"}
 }
 
 func getTerminalSize() {
@@ -115,6 +117,11 @@ func fixAfterResize() {
 	}
 }
 
+func setCurrentConnected(n int) {
+	as.currentConnected = n
+	renderCurrentConnected(false)
+}
+
 func setPingTo(ms int) {
 	if ms > 999 {
 		ms = 999
@@ -131,7 +138,7 @@ func setWelcomeMessage(s string) {
 }
 
 func spaceForWelcome() bool {
-	return (14 + len(as.welcome) + len(as.url)) <= ts.w
+	return (16 + len(as.welcome) + len(as.url)) <= ts.w
 }
 
 func homeStyle() {
@@ -156,14 +163,25 @@ func renderPing(alreadyLocked bool) {
 	resetStyles()
 }
 
-// renderWelcomeMessage renders the welcomeMessage in the bottom middle
+func renderCurrentConnected(alreadyLocked bool) {
+	if !alreadyLocked {
+		fmtMu.Lock()
+		defer fmtMu.Unlock()
+	}
+
+	cursorGoto(ts.h, ts.w-6)
+	homeStyle()
+	fmt.Printf("%d", as.currentConnected)
+	resetStyles()
+}
+
 func renderWelcomeMessage(alreadyLocked bool) {
 	if !alreadyLocked {
 		fmtMu.Lock()
 		defer fmtMu.Unlock()
 	}
 
-	cursorGoto(ts.h, ts.w-5-len(as.welcome))
+	cursorGoto(ts.h, ts.w-7-len(as.welcome))
 	homeStyle()
 	fmt.Print(as.welcome)
 	resetStyles()
@@ -196,6 +214,7 @@ func renderHome(alreadyLocked bool) {
 	if spaceForWelcome() {
 		renderWelcomeMessage(true)
 	}
+	renderCurrentConnected(true)
 	renderPing(true)
 	if is == chanInsert {
 		cursorBar()

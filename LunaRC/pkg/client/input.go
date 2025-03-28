@@ -2,7 +2,7 @@ package client
 
 import (
 	"fmt"
-	"lrc"
+	events "lrc"
 	"math"
 	"net"
 	"os"
@@ -196,6 +196,7 @@ func renderPartialName() {
 	clearLine()
 	homeStyle()
 	fmt.Printf("%s", cmdBuffer)
+	renderCurrentConnected(true)
 	renderPing(true)
 }
 
@@ -216,6 +217,7 @@ func renderPartialColor() {
 	clearLine()
 	homeStyle()
 	fmt.Printf("%s", cmdBuffer)
+	renderCurrentConnected(true)
 	renderPing(true)
 }
 
@@ -239,7 +241,7 @@ func inputChanInsert(buf []byte, quit chan struct{}, send chan events.LRCEvent) 
 	if (buf[0] < 127) && (buf[0] > 31) {
 		if cursor == math.MaxUint16 {
 			cursor = 0
-			send <- events.GenInitEvent(as.color,as.name)
+			send <- events.GenInitEvent(as.color, as.name)
 			wordL = 0
 			initMyMsg(as.color, as.name)
 		}

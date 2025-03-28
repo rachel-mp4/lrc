@@ -3,7 +3,7 @@ package client
 import (
 	"io"
 	"log"
-	"lrc"
+	events "lrc"
 	"net"
 	"time"
 )
@@ -102,6 +102,7 @@ func parseCommand(e events.LRCEvent) {
 		}
 	case events.EventPong:
 		go ponged()
+		setCurrentConnected(int(e[5]))
 	case events.EventInit:
 		id, color, name, isFromMe := events.ParseInitEvent(e)
 		initMsg(id, color, name, true, isFromMe)
@@ -115,6 +116,7 @@ func parseCommand(e events.LRCEvent) {
 }
 
 func pinger(send chan events.LRCEvent, quit chan struct{}) {
+	ping(send)
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	for {
@@ -142,7 +144,7 @@ func ponged() {
 
 // dial dials the url
 func dial(url string) (net.Conn, error) {
-	return net.Dial("tcp", url + ":927")
+	return net.Dial("tcp", url+":927")
 }
 
 // hangUp closes the connection if it exists
