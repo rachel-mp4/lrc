@@ -212,7 +212,7 @@ func (server *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer conn.Close()
-	client := &client{wsconn: conn, evtChan: make(chan events.LRCEvent)}
+	client := &client{wsconn: conn, evtChan: make(chan events.LRCEvent, 100)}
 	server.clientsMu.Lock()
 	server.clients[client] = true
 	server.clientsMu.Unlock()
