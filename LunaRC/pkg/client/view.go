@@ -86,7 +86,7 @@ func initChan() {
 
 // TODO store and read from file
 func recallApplicationState() {
-	as = appState{"localhost", as.welcome, 0, 0, 13, "wanderer"}
+	as = appState{"moth11.net", "beep", 0, 0, 13, "wanderer"}
 }
 
 func getTerminalSize() {
@@ -171,7 +171,11 @@ func renderCurrentConnected(alreadyLocked bool) {
 
 	cursorGoto(ts.h, ts.w-6)
 	homeStyle()
-	fmt.Printf("%d", as.currentConnected)
+	if as.currentConnected < 0 {
+		fmt.Print("--")
+	} else {
+		fmt.Printf("%d", as.currentConnected)
+	}
 	resetStyles()
 }
 

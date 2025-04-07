@@ -102,7 +102,12 @@ func parseCommand(e events.LRCEvent) {
 		}
 	case events.EventPong:
 		go ponged()
-		setCurrentConnected(int(e[5]))
+		if len([]byte(e)) > 5 {
+			setCurrentConnected(int(e[5]))
+		} else {
+			setCurrentConnected(-1)
+		}
+
 	case events.EventInit:
 		id, color, name, isFromMe := events.ParseInitEvent(e)
 		initMsg(id, color, name, true, isFromMe)
