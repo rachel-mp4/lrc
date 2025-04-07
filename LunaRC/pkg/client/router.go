@@ -3,7 +3,7 @@ package client
 import (
 	"io"
 	"log"
-	events "lrc"
+	"github.com/rachel-mp4/lrc/lrc"
 	"net"
 	"time"
 )

@@ -2,7 +2,7 @@ package client
 
 import (
 	"fmt"
-	events "lrc"
+	"github.com/rachel-mp4/lrc/lrc"
 	"math"
 	"net"
 	"os"

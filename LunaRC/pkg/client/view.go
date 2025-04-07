@@ -2,7 +2,7 @@ package client
 
 import (
 	"fmt"
-	events "lrc"
+	"github.com/rachel-mp4/lrc/lrc"
 	"os"
 	"sync"
 
@@ -86,7 +86,7 @@ func initChan() {
 
 // TODO store and read from file
 func recallApplicationState() {
-	as = appState{"moth11.net", "beep", 0, 0, 13, "wanderer"}
+	as = appState{"localhost", "beep", 0, 0, 13, "wanderer"}
 }
 
 func getTerminalSize() {
