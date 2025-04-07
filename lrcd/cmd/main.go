@@ -2,7 +2,7 @@ package main
 
 import (
 	"log"
-	"lrcd/pkg/lrcd"
+	"github.com/rachel-mp4/lrc/lrcd/pkg/lrcd"
 	"os"
 	"sync"
 )

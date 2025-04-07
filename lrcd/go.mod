@@ -1,4 +1,4 @@
-module lrcd
+module github.com/rachel-mp4/lrc/lrcd
 
 go 1.22.1
 
