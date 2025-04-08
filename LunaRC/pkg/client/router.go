@@ -1,11 +1,13 @@
 package client
 
 import (
+	"context"
 	"io"
 	"log"
-	"github.com/rachel-mp4/lrc/lrc"
 	"net"
 	"time"
+
+	"github.com/rachel-mp4/lrc/lrc"
 )
 
 var (
@@ -31,7 +33,7 @@ func ConnectToChannel(url string, quit chan struct{}, send chan events.LRCEvent)
 
 	go chat(conn, send, quit)
 	go relayToParser(outChan, quit)
-	go events.Degunker(100, readChan, outChan, quit)
+	go events.Degunker(100, readChan, outChan, quit, context.Background())
 	go listen(conn, readChan, quit)
 	go pinger(send, quit)
 	return conn

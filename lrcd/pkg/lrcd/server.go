@@ -19,7 +19,8 @@ import (
 )
 
 type Server struct {
-	started      bool
+	ctx          context.Context
+	cancel       context.CancelFunc
 	tcpserver    *tcpserver
 	wsserver     *wsserver
 	clients      map[*client]bool
@@ -34,6 +35,7 @@ type Server struct {
 
 type wsserver struct {
 	port     int
+	path     string
 	upgrader *websocket.Upgrader
 	server   *http.Server
 }
@@ -46,6 +48,7 @@ type tcpserver struct {
 type options struct {
 	portTCP *int
 	portWS  *int
+	pathWS  *string
 	welcome *string
 	writer  *io.Writer
 	verbose bool
@@ -69,6 +72,13 @@ func WithWSPort(port int) Option {
 			return errors.New("port should be postive")
 		}
 		options.portWS = &port
+		return nil
+	}
+}
+
+func WithWSPath(path string) Option {
+	return func(options *options) error {
+		options.pathWS = &path
 		return nil
 	}
 }
@@ -118,6 +128,10 @@ func NewServer(opts ...Option) (*Server, error) {
 			},
 		}}
 	}
+	server.wsserver.path = "/"
+	if options.pathWS != nil {
+		server.wsserver.path += *options.pathWS + "/"
+	}
 
 	welcomeString := "Welcome to my lrc server!"
 	if options.welcome != nil {
@@ -135,60 +149,64 @@ func NewServer(opts ...Option) (*Server, error) {
 	return &server, nil
 }
 
-func (server *Server) Start() error {
-	if server.started {
+func (s *Server) Start() error {
+	if s.ctx != nil {
 		return errors.New("cannot start already started server")
 	}
-	server.clients = make(map[*client]bool)
-	server.clientsMu = sync.Mutex{}
-	server.clientToID = make(map[*client]uint32)
-	server.lastID = 0
-	server.eventChannel = make(chan evt, 100)
-	go server.broadcaster()
-	server.logDebug("Hello, world!")
-	if server.tcpserver != nil {
-		nl, err := net.Listen("tcp", ":"+strconv.Itoa(server.tcpserver.port))
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+	s.clients = make(map[*client]bool)
+	s.clientsMu = sync.Mutex{}
+	s.clientToID = make(map[*client]uint32)
+	s.lastID = 0
+	s.eventChannel = make(chan evt, 100)
+	go s.broadcaster()
+	s.logDebug("Hello, world!")
+	if s.tcpserver != nil {
+		nl, err := net.Listen("tcp", ":"+strconv.Itoa(s.tcpserver.port))
 		if err != nil {
-			server.log(err.Error())
+			s.log(err.Error())
 			return err
 		}
-		server.tcpserver.nl = &nl
-		go server.greet()
-		server.log("listening on tcp/" + strconv.Itoa(server.tcpserver.port))
+		s.tcpserver.nl = &nl
+		go s.greet()
+		s.log("listening on tcp/" + strconv.Itoa(s.tcpserver.port))
 	}
 
-	if server.wsserver != nil {
+	if s.wsserver != nil {
 		mux := http.NewServeMux()
-		mux.HandleFunc("/ws", server.wsHandler)
-		server.wsserver.server = &http.Server{
-			Addr:    ":" + strconv.Itoa(server.wsserver.port),
+		mux.HandleFunc(s.wsserver.path+"ws", s.wsHandler)
+		s.wsserver.server = &http.Server{
+			Addr:    ":" + strconv.Itoa(s.wsserver.port),
 			Handler: mux,
 		}
 		go func() {
-			if err := server.wsserver.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				server.log("websocket server error: " + err.Error())
+			if err := s.wsserver.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+				s.log("websocket server error: " + err.Error())
 			}
 		}()
-		server.log("listening on ws/" + strconv.Itoa(server.wsserver.port))
+		s.log("listening on ws/" + strconv.Itoa(s.wsserver.port))
 	}
-	server.started = true
 	return nil
 }
 
-func (server *Server) Stop() error {
-	if !server.started {
+func (s *Server) Stop() error {
+	if s.ctx == nil {
 		return errors.New("cannot stop already stopped server")
 	}
-	if server.tcpserver != nil {
-		(*server.tcpserver.nl).Close()
+	s.cancel()
+	s.ctx = nil
+	s.cancel = nil
+
+	if s.tcpserver != nil {
+		(*s.tcpserver.nl).Close()
 	}
-	if server.wsserver != nil {
+
+	if s.wsserver != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		server.wsserver.server.Shutdown(ctx)
+		s.wsserver.server.Shutdown(ctx)
 	}
-	close(server.eventChannel)
-	server.logDebug("Goodbye world :c")
+	s.logDebug("Goodbye world :c")
 	return nil
 }
 
@@ -205,42 +223,42 @@ type evt struct {
 	evt    events.LRCEvent
 }
 
-func (server *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := server.wsserver.upgrader.Upgrade(w, r, nil)
+func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
+	conn, err := s.wsserver.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Println("Upgrade failed:", err)
 		return
 	}
 	defer conn.Close()
 	client := &client{wsconn: conn, evtChan: make(chan events.LRCEvent, 100)}
-	server.clientsMu.Lock()
-	server.clients[client] = true
-	server.clientsMu.Unlock()
+	s.clientsMu.Lock()
+	s.clients[client] = true
+	s.clientsMu.Unlock()
 
 	var wg sync.WaitGroup
 	wg.Add(2)
-	go func() { defer wg.Done(); wsWriter(*client) }()
-	go func() { defer wg.Done(); server.listenToWS(client) }()
-	client.evtChan <- server.welcomeEvt
-	server.logDebug("greeted new ws connection!")
+	go func() { defer wg.Done(); client.wsWriter() }()
+	go func() { defer wg.Done(); s.listenToWS(client) }()
+	client.evtChan <- s.welcomeEvt
+	s.logDebug("greeted new ws connection!")
 	wg.Wait()
 
-	server.clientsMu.Lock()
-	delete(server.clients, client)
+	s.clientsMu.Lock()
+	delete(s.clients, client)
 	close(client.evtChan)
-	server.clientsMu.Unlock()
+	s.clientsMu.Unlock()
 	conn.Close()
-	server.logDebug("closed ws connection")
+	s.logDebug("closed ws connection")
 }
 
 // Entrypoint
 // greet accepts new connections, and then passes them to the handler
-func (server *Server) greet() {
+func (s *Server) greet() {
 	for {
-		conn, err := (*server.tcpserver.nl).Accept()
+		conn, err := (*s.tcpserver.nl).Accept()
 		if err != nil {
 			if strings.Contains(err.Error(), "use of closed network connection") {
-				server.log(err.Error())
+				s.log(err.Error())
 				return
 			}
 			log.Println("Error accepting connection:", err)
@@ -248,16 +266,16 @@ func (server *Server) greet() {
 		}
 		tcpConn := conn.(*net.TCPConn)
 		tcpConn.SetNoDelay(true)
-		go server.tcpHandler(conn)
+		go s.tcpHandler(conn)
 	}
 }
 
-// handle handles the lifetime of a connection (pings it, makes a model for the client, reads from it, and then ultimately removes it when they disconnect)
-func (server *Server) tcpHandler(conn net.Conn) {
+// tcpHandler handles the lifetime of a connection (pings it, makes a model for the client, reads from it, and then ultimately removes it when they disconnect)
+func (s *Server) tcpHandler(conn net.Conn) {
 	client := &client{tcpconn: &conn, evtChan: make(chan events.LRCEvent, 100)}
-	server.clientsMu.Lock()
-	server.clients[client] = true
-	server.clientsMu.Unlock()
+	s.clientsMu.Lock()
+	s.clients[client] = true
+	s.clientsMu.Unlock()
 
 	var wg sync.WaitGroup
 	readChan := make(chan []byte, 10)
@@ -266,46 +284,50 @@ func (server *Server) tcpHandler(conn net.Conn) {
 	quit := make(chan struct{}) //can be closed by degunker if something goes wrong
 
 	wg.Add(4)
-	go func() { defer wg.Done(); clientWriter(client, quit) }()
-	go func() { defer wg.Done(); server.relayToBroadcaster(client, outChan, quit) }()
-	go func() { defer wg.Done(); events.Degunker(10, readChan, outChan, quit) }()
-	go func() { defer wg.Done(); server.listenToClient(client, readChan, quit) }()
-	client.evtChan <- server.welcomeEvt
-	server.logDebug("greeted new tcp connection!")
+	go func() { defer wg.Done(); client.tcpWriter(quit, s.ctx) }()
+	go func() { defer wg.Done(); client.relayToBroadcaster(outChan, s.eventChannel, quit, s.ctx) }()
+	go func() { defer wg.Done(); events.Degunker(10, readChan, outChan, quit, s.ctx) }()
+	go func() { defer wg.Done(); s.listenToTCP(client, readChan, quit, s.ctx) }()
+	client.evtChan <- s.welcomeEvt
+	s.logDebug("greeted new tcp connection!")
 	wg.Wait()
 	close(outChan)
 
-	server.clientsMu.Lock()
-	delete(server.clients, client)
+	s.clientsMu.Lock()
+	delete(s.clients, client)
 	close(client.evtChan)
-	server.clientsMu.Unlock()
+	s.clientsMu.Unlock()
 	conn.Close()
-	server.logDebug("closed tcp connection")
+	s.logDebug("closed tcp connection")
 }
 
 // relayToBroadcaster wrangles the output of degunker into an event that we can send to broadcaster through the global eventChannel.
 // Returns if quit or outChan closes.
-func (server *Server) relayToBroadcaster(client *client, outChan chan events.LRCEvent, quit chan struct{}) {
+func (client *client) relayToBroadcaster(fromDegunker chan events.LRCEvent, toBroadcaster chan evt, degunkerError chan struct{}, ctx context.Context) {
 	for {
 		select {
-		case <-quit:
+		case <-ctx.Done():
 			return
-		case e, ok := <-outChan:
+		case <-degunkerError:
+			return
+		case e, ok := <-fromDegunker:
 			if !ok {
 				return
 			}
-			server.eventChannel <- evt{client, e}
+			toBroadcaster <- evt{client, e}
 		}
 	}
 }
 
-// listenToClient polls the clients connection and then sends any daya it recieves to the degunker.
+// listenToClient polls the clients connection and then sends any data it recieves to the degunker.
 // If the connection closes, it closes readChan, which causes degunker to close quit
-func (server *Server) listenToClient(client *client, readChan chan []byte, quit chan struct{}) {
+func (server *Server) listenToTCP(client *client, readChan chan []byte, degunkerError chan struct{}, ctx context.Context) {
 	buf := make([]byte, 1024)
 	for {
 		select {
-		case <-quit:
+		case <-ctx.Done():
+			return
+		case <-degunkerError:
 			return
 		default:
 			n, err := (*client.tcpconn).Read(buf)
@@ -323,10 +345,12 @@ func (server *Server) listenToClient(client *client, readChan chan []byte, quit 
 
 // clientWriter takes an event from the clients event channel, and writes it to the tcp connection.
 // If the degunker runs into an error, or if the client's eventChannel closes, then this returns
-func clientWriter(client *client, quit chan struct{}) {
+func (client *client) tcpWriter(degunkerError chan struct{}, ctx context.Context) {
 	for {
 		select {
-		case <-quit:
+		case <-ctx.Done():
+			return
+		case <-degunkerError:
 			return
 		case evt, ok := <-client.evtChan:
 			if !ok {
@@ -337,18 +361,23 @@ func clientWriter(client *client, quit chan struct{}) {
 	}
 }
 
-func (server *Server) listenToWS(client *client) {
+func (s *Server) listenToWS(client *client) {
 	for {
-		_, e, err := client.wsconn.ReadMessage()
-		if err != nil {
+		select {
+		case <-s.ctx.Done():
 			return
+		default:
+			_, e, err := client.wsconn.ReadMessage()
+			if err != nil {
+				return
+			}
+			s.logDebug(fmt.Sprintf("read %x", e))
+			s.eventChannel <- evt{client, e[1:]}
 		}
-		server.logDebug(fmt.Sprintf("read %x", e))
-		server.eventChannel <- evt{client, e[1:]}
 	}
 }
 
-func wsWriter(client client) {
+func (client *client) wsWriter() {
 	for {
 		evt, ok := <-client.evtChan
 		if !ok {
@@ -359,55 +388,55 @@ func wsWriter(client client) {
 }
 
 // broadcaster takes an event from the events channel, and broadcasts it to all the connected clients individual event channels
-func (server *Server) broadcaster() {
-	for evt := range server.eventChannel {
-		server.logDebug(fmt.Sprintf("recieved %x from %x", evt.evt, evt.client))
-		id := server.clientToID[evt.client]
-		if id == 0 {
-			if !(events.IsInit(evt.evt) || events.IsPing(evt.evt)) {
-				server.logDebug(fmt.Sprintf("skipped %x", evt.evt))
+func (s *Server) broadcaster() {
+	for {
+		select {
+		case <-s.ctx.Done():
+			return
+		case evt := <-s.eventChannel:
+			s.logDebug(fmt.Sprintf("recieved %x from %x", evt.evt, evt.client))
+			id := s.clientToID[evt.client]
+			if id == 0 {
+				if !(events.IsInit(evt.evt) || events.IsPing(evt.evt)) {
+					s.logDebug(fmt.Sprintf("skipped %x", evt.evt))
+					continue
+				}
+				s.clientToID[evt.client] = s.lastID + 1
+				s.lastID += 1
+				id = s.lastID
+			}
+
+			if events.IsPing(evt.evt) {
+				evt.client.evtChan <- events.ServerPongWithClientCount(uint8(len(s.clients)))
 				continue
 			}
-			server.clientToID[evt.client] = server.lastID + 1
-			server.lastID += 1
-			id = server.lastID
-		}
-		if events.IsPing(evt.evt) {
-			evt.client.evtChan <- events.ServerPongWithClientCount(uint8(len(server.clients)))
-			continue
-		}
-		if events.IsPub(evt.evt) {
-			server.clientToID[evt.client] = 0
-		}
-		bevt, eevt := events.GenServerEvent(evt.evt, id)
+			if events.IsPub(evt.evt) {
+				s.clientToID[evt.client] = 0
+			}
+			bevt, eevt := events.GenServerEvent(evt.evt, id)
 
-		server.clientsMu.Lock()
-		for client := range server.clients {
-			evtToSend := bevt
-			if client == evt.client {
-				evtToSend = eevt
-			}
-			select {
-			case client.evtChan <- evtToSend:
-				server.logDebug(fmt.Sprintf("b %x", bevt))
-			default:
-				server.log("kicked client")
-				if client.tcpconn != nil {
-					err := (*client.tcpconn).Close()
-					if err != nil {
-						//TODO what's going on here chat
-					}
+			s.clientsMu.Lock()
+			for client := range s.clients {
+				evtToSend := bevt
+				if client == evt.client {
+					evtToSend = eevt
 				}
-				if client.wsconn != nil {
-					err := (*client.wsconn).Close()
-					if err != nil {
-						//TODO help chat
+				select {
+				case client.evtChan <- evtToSend:
+					s.logDebug(fmt.Sprintf("b %x", bevt))
+				default:
+					s.log("kicked client")
+					if client.tcpconn != nil {
+						(*client.tcpconn).Close()
 					}
+					if client.wsconn != nil {
+						(*client.wsconn).Close()
+					}
+					delete(s.clients, client)
 				}
-				delete(server.clients, client)
 			}
+			s.clientsMu.Unlock()
 		}
-		server.clientsMu.Unlock()
 	}
 }
 

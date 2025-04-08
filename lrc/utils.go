@@ -1,6 +1,7 @@
 package events
 
 import (
+	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -215,45 +216,50 @@ func (rb *ringBuffer) getTarget() (byte, error) {
 // It stores up to capacity of these events, and whenever it stores enough data corresponding to an LRCEvent, it sends it out on the out channel.
 // If something goes wrong, (it runs out of capacity, it recieves an event length 0,) it closes the quit channel, and returns an error.
 // It will return with no error if the in channel closes. It will panic if the out channel closes.
-func Degunker(capacity int, in chan []byte, out chan LRCEvent, quit chan struct{}) error {
+func Degunker(capacity int, in chan []byte, out chan LRCEvent, quit chan struct{}, ctx context.Context) error {
 	var target byte
 	var err error
 	rb := newRingBuffer(capacity)
 	for {
-		b, ok := <-in
-		if !ok {
-			close(quit)
+		select {
+		case <-ctx.Done():
 			return nil
-		}
-
-		err = rb.enqueue(b)
-		if err != nil {
-			close(quit)
-			return err
-		}
-
-		for int(target) <= rb.data {
-			if target == 0 {
-				if rb.length() == 0 {
-					break
-				}
-				target, err = rb.getTarget()
-				if err != nil {
-					close(quit)
-					return err
-				}
-				if int(target) > rb.data {
-					break
-				}
+		default:
+			b, ok := <-in
+			if !ok {
+				close(quit)
+				return nil
 			}
-			evt, err := rb.dequeue(target)
+
+			err = rb.enqueue(b)
 			if err != nil {
 				close(quit)
 				return err
 			}
 
-			out <- evt
-			target = 0
+			for int(target) <= rb.data {
+				if target == 0 {
+					if rb.length() == 0 {
+						break
+					}
+					target, err = rb.getTarget()
+					if err != nil {
+						close(quit)
+						return err
+					}
+					if int(target) > rb.data {
+						break
+					}
+				}
+				evt, err := rb.dequeue(target)
+				if err != nil {
+					close(quit)
+					return err
+				}
+
+				out <- evt
+				target = 0
+			}
 		}
 	}
 }
