@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/rachel-mp4/lrc/lrc"
+	events "github.com/rachel-mp4/lrc/lrc"
 	"io"
 	"log"
 	"net"
@@ -190,24 +190,24 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Stop() error {
-	if s.ctx == nil {
+	select {
+	case <-s.ctx.Done():
 		return errors.New("cannot stop already stopped server")
-	}
-	s.cancel()
-	s.ctx = nil
-	s.cancel = nil
+	default:
+		s.cancel()
 
-	if s.tcpserver != nil {
-		(*s.tcpserver.nl).Close()
-	}
+		if s.tcpserver != nil {
+			(*s.tcpserver.nl).Close()
+		}
 
-	if s.wsserver != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		s.wsserver.server.Shutdown(ctx)
+		if s.wsserver != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			s.wsserver.server.Shutdown(ctx)
+		}
+		s.logDebug("Goodbye world :c")
+		return nil
 	}
-	s.logDebug("Goodbye world :c")
-	return nil
 }
 
 // Client is a model for a client's connection, and their evtChannel, the queue of LRCEvents that have yet to be written to the connection
