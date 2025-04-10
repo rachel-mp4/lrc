@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 )
@@ -31,6 +30,8 @@ type Server struct {
 	welcomeEvt   events.LRCEvent
 	logger       *log.Logger
 	debugLogger  *log.Logger
+	emptyChan    chan struct{}
+	timeToEmit   *time.Duration
 }
 
 type wsserver struct {
@@ -46,63 +47,17 @@ type tcpserver struct {
 }
 
 type options struct {
-	portTCP *int
-	portWS  *int
-	pathWS  *string
-	welcome *string
-	writer  *io.Writer
-	verbose bool
+	portTCP    *int
+	portWS     *int
+	pathWS     *string
+	welcome    *string
+	writer     *io.Writer
+	verbose    bool
+	emptyChan  chan struct{}
+	timeToEmit *time.Duration
 }
 
 type Option func(option *options) error
-
-func WithTCPPort(port int) Option {
-	return func(options *options) error {
-		if port < 0 {
-			return errors.New("port should be postive")
-		}
-		options.portTCP = &port
-		return nil
-	}
-}
-
-func WithWSPort(port int) Option {
-	return func(options *options) error {
-		if port < 0 {
-			return errors.New("port should be postive")
-		}
-		options.portWS = &port
-		return nil
-	}
-}
-
-func WithWSPath(path string) Option {
-	return func(options *options) error {
-		options.pathWS = &path
-		return nil
-	}
-}
-
-func WithWelcome(welcome string) Option {
-	return func(options *options) error {
-		if utf8.RuneCountInString(welcome) > 50 {
-			return errors.New("welcome must be at most 50 runes")
-		}
-		options.welcome = &welcome
-		return nil
-	}
-}
-
-func WithLogging(w io.Writer, verbose bool) Option {
-	return func(options *options) error {
-		if w == nil {
-			return errors.New("must provide a writer to log to")
-		}
-		options.writer = &w
-		options.verbose = verbose
-		return nil
-	}
-}
 
 func NewServer(opts ...Option) (*Server, error) {
 	var options options
@@ -143,6 +98,11 @@ func NewServer(opts ...Option) (*Server, error) {
 			server.debugLogger = log.New(*options.writer, "[debug]", log.Ldate|log.Ltime)
 		}
 	}
+	if options.emptyChan != nil {
+		server.emptyChan = options.emptyChan
+		server.timeToEmit = options.timeToEmit
+	}
+
 	e := append([]byte{byte(events.EventPing)}, []byte(welcomeString)...)
 	wm, _ := events.GenServerEvent(e, 0)
 	server.welcomeEvt = wm
@@ -181,10 +141,13 @@ func (s *Server) Start() error {
 		}
 		go func() {
 			if err := s.wsserver.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				s.log("websocket server error: " + err.Error())
+				s.log("websocket server " + s.wsserver.path + " error: " + err.Error())
 			}
 		}()
 		s.log("listening on ws/" + strconv.Itoa(s.wsserver.port))
+	}
+	if s.timeToEmit != nil {
+		time.AfterFunc(*s.timeToEmit, s.checkIfEmpty)
 	}
 	return nil
 }
@@ -208,6 +171,17 @@ func (s *Server) Stop() error {
 		s.logDebug("Goodbye world :c")
 		return nil
 	}
+}
+
+func (s *Server) checkIfEmpty() {
+	if s.emptyChan == nil {
+		return
+	}
+	if len(s.clients) != 0 {
+		return
+	}
+	close(s.emptyChan)
+	s.emptyChan = nil
 }
 
 // Client is a model for a client's connection, and their evtChannel, the queue of LRCEvents that have yet to be written to the connection
