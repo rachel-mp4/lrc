@@ -127,7 +127,7 @@ func (s *Server) Start() error {
 			case <-s.ctx.Done():
 				return
 			case <-t.C:
-				s.broadcast(s.welcomeEvt, s.welcomeEvt, nil)
+				s.broadcastAll(s.welcomeEvt)
 			}
 		}
 	}()
@@ -385,34 +385,59 @@ func (s *Server) broadcaster() {
 			return
 		case evt := <-s.eventChannel:
 			s.logDebug(fmt.Sprintf("recieved %x from %x", evt.evt, evt.client))
-			id := s.clientToID[evt.client]
-			if id == 0 {
-				if !(events.IsInit(evt.evt) || events.IsPing(evt.evt)) {
+			if events.IsPing(evt.evt) {
+				s.clientsMu.Lock()
+				evt.client.evtChan <- events.ServerPongWithClientCount(uint8(len(s.clients)))
+				s.clientsMu.Unlock()
+				continue
+			}
+
+			id, ok := s.clientToID[evt.client]
+			if !ok {
+				if !events.IsInit(evt.evt) {
 					s.logDebug(fmt.Sprintf("skipped %x", evt.evt))
 					continue
 				}
 				s.clientToID[evt.client] = s.lastID + 1
 				s.lastID += 1
 				id = s.lastID
-			}
-
-			if events.IsPing(evt.evt) {
-				evt.client.evtChan <- events.ServerPongWithClientCount(uint8(len(s.clients)))
+				s.broadcastInit(evt.evt, evt.client, id)
 				continue
 			}
-			if events.IsPub(evt.evt) {
-				s.clientToID[evt.client] = 0
-			}
-			bevt, eevt := events.GenServerEvent(evt.evt, id)
 
-			s.clientsMu.Lock()
-			s.broadcast(bevt,eevt, evt.client)
-			s.clientsMu.Unlock()
+			if events.IsPub(evt.evt) {
+				delete(s.clientToID, evt.client)
+			}
+			lrcEvent, _ := events.GenServerEvent(evt.evt, id)
+			s.broadcastAll(lrcEvent)
 		}
 	}
 }
 
-func (s *Server) broadcast(bevt []byte, eevt []byte, c *client) {
+func (s *Server) broadcastAll(evt []byte) {
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
+	for client := range s.clients {
+		select {
+		case client.evtChan <- evt:
+			s.logDebug(fmt.Sprintf("b %x", evt))
+		default:
+			s.log("kicked client")
+			if client.tcpconn != nil {
+				(*client.tcpconn).Close()
+			}
+			if client.wsconn != nil {
+				(*client.wsconn).Close()
+			}
+			delete(s.clients, client)
+		}
+	}
+}
+
+func (s *Server) broadcastInit(evt []byte, c *client, id uint32) {
+	bevt, eevt := events.GenServerEvent(evt, id)
+	s.clientsMu.Lock()
+	defer s.clientsMu.Unlock()
 	for client := range s.clients {
 		evtToSend := bevt
 		if client == c {
