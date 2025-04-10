@@ -120,6 +120,17 @@ func (s *Server) Start() error {
 	s.lastID = 0
 	s.eventChannel = make(chan evt, 100)
 	go s.broadcaster()
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-t.C:
+				s.broadcast(s.welcomeEvt, s.welcomeEvt, nil)
+			}
+		}
+	}()
 	s.logDebug("Hello, world!")
 	if s.tcpserver != nil {
 		nl, err := net.Listen("tcp", ":"+strconv.Itoa(s.tcpserver.port))
@@ -220,6 +231,7 @@ func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
 	s.clientsMu.Lock()
 	delete(s.clients, client)
 	close(client.evtChan)
+	s.checkIfEmpty()
 	s.clientsMu.Unlock()
 	conn.Close()
 	s.logDebug("closed ws connection")
@@ -270,6 +282,7 @@ func (s *Server) tcpHandler(conn net.Conn) {
 	s.clientsMu.Lock()
 	delete(s.clients, client)
 	close(client.evtChan)
+	s.checkIfEmpty()
 	s.clientsMu.Unlock()
 	conn.Close()
 	s.logDebug("closed tcp connection")
@@ -357,7 +370,10 @@ func (client *client) wsWriter() {
 		if !ok {
 			return
 		}
-		client.wsconn.WriteMessage(websocket.BinaryMessage, evt)
+		err := client.wsconn.WriteMessage(websocket.BinaryMessage, evt)
+		if err != nil {
+			return
+		}
 	}
 }
 
@@ -390,26 +406,30 @@ func (s *Server) broadcaster() {
 			bevt, eevt := events.GenServerEvent(evt.evt, id)
 
 			s.clientsMu.Lock()
-			for client := range s.clients {
-				evtToSend := bevt
-				if client == evt.client {
-					evtToSend = eevt
-				}
-				select {
-				case client.evtChan <- evtToSend:
-					s.logDebug(fmt.Sprintf("b %x", bevt))
-				default:
-					s.log("kicked client")
-					if client.tcpconn != nil {
-						(*client.tcpconn).Close()
-					}
-					if client.wsconn != nil {
-						(*client.wsconn).Close()
-					}
-					delete(s.clients, client)
-				}
-			}
+			s.broadcast(bevt,eevt, evt.client)
 			s.clientsMu.Unlock()
+		}
+	}
+}
+
+func (s *Server) broadcast(bevt []byte, eevt []byte, c *client) {
+	for client := range s.clients {
+		evtToSend := bevt
+		if client == c {
+			evtToSend = eevt
+		}
+		select {
+		case client.evtChan <- evtToSend:
+			s.logDebug(fmt.Sprintf("b %x", bevt))
+		default:
+			s.log("kicked client")
+			if client.tcpconn != nil {
+				(*client.tcpconn).Close()
+			}
+			if client.wsconn != nil {
+				(*client.wsconn).Close()
+			}
+			delete(s.clients, client)
 		}
 	}
 }
