@@ -14,7 +14,6 @@ func main() {
 	ec := make(chan struct{})
 	server, err := lrcd.NewServer(
 		lrcd.WithTCPPort(927), 
-		lrcd.WithWSPort(8080), 
 		lrcd.WithLogging(os.Stdout, true), 
 		lrcd.WithEmptyChannel(ec),
 		lrcd.WithEmptySignalAfter(2*time.Second))
