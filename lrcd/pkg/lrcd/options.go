@@ -2,9 +2,9 @@ package lrcd
 
 import (
 	"errors"
-	"unicode/utf8"
 	"io"
 	"time"
+	"unicode/utf8"
 )
 
 func WithTCPPort(port int) Option {
@@ -13,23 +13,6 @@ func WithTCPPort(port int) Option {
 			return errors.New("port should be postive")
 		}
 		options.portTCP = &port
-		return nil
-	}
-}
-
-func WithWSPort(port int) Option {
-	return func(options *options) error {
-		if port < 0 {
-			return errors.New("port should be postive")
-		}
-		options.portWS = &port
-		return nil
-	}
-}
-
-func WithWSPath(path string) Option {
-	return func(options *options) error {
-		options.pathWS = &path
 		return nil
 	}
 }

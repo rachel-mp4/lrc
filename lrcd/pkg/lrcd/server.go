@@ -21,7 +21,6 @@ type Server struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	tcpserver    *tcpserver
-	wsserver     *wsserver
 	clients      map[*client]bool
 	clientsMu    sync.Mutex
 	clientToID   map[*client]uint32
@@ -34,13 +33,6 @@ type Server struct {
 	timeToEmit   *time.Duration
 }
 
-type wsserver struct {
-	port     int
-	path     string
-	upgrader *websocket.Upgrader
-	server   *http.Server
-}
-
 type tcpserver struct {
 	port int
 	nl   *net.Listener
@@ -48,8 +40,6 @@ type tcpserver struct {
 
 type options struct {
 	portTCP    *int
-	portWS     *int
-	pathWS     *string
 	welcome    *string
 	writer     *io.Writer
 	verbose    bool
@@ -67,25 +57,11 @@ func NewServer(opts ...Option) (*Server, error) {
 			return nil, err
 		}
 	}
-	if options.portTCP == nil && options.portWS == nil {
-		return nil, errors.New("server must be open on at least one port")
-	}
 
 	server := Server{}
 
 	if options.portTCP != nil {
 		server.tcpserver = &tcpserver{port: *options.portTCP}
-	}
-	if options.portWS != nil {
-		server.wsserver = &wsserver{port: *options.portWS, upgrader: &websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool {
-				return true
-			},
-		}}
-	}
-	server.wsserver.path = "/"
-	if options.pathWS != nil {
-		server.wsserver.path += *options.pathWS + "/"
 	}
 
 	welcomeString := "Welcome to my lrc server!"
@@ -143,20 +119,6 @@ func (s *Server) Start() error {
 		s.log("listening on tcp/" + strconv.Itoa(s.tcpserver.port))
 	}
 
-	if s.wsserver != nil {
-		mux := http.NewServeMux()
-		mux.HandleFunc(s.wsserver.path+"ws", s.wsHandler)
-		s.wsserver.server = &http.Server{
-			Addr:    ":" + strconv.Itoa(s.wsserver.port),
-			Handler: mux,
-		}
-		go func() {
-			if err := s.wsserver.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				s.log("websocket server " + s.wsserver.path + " error: " + err.Error())
-			}
-		}()
-		s.log("listening on ws/" + strconv.Itoa(s.wsserver.port))
-	}
 	if s.timeToEmit != nil {
 		time.AfterFunc(*s.timeToEmit, s.checkIfEmpty)
 	}
@@ -172,12 +134,6 @@ func (s *Server) Stop() error {
 
 		if s.tcpserver != nil {
 			(*s.tcpserver.nl).Close()
-		}
-
-		if s.wsserver != nil {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			s.wsserver.server.Shutdown(ctx)
 		}
 		s.logDebug("Goodbye world :c")
 		return nil
@@ -208,33 +164,43 @@ type evt struct {
 	evt    events.LRCEvent
 }
 
-func (s *Server) wsHandler(w http.ResponseWriter, r *http.Request) {
-	conn, err := s.wsserver.upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		log.Println("Upgrade failed:", err)
-		return
+func (s *Server) WSHandler() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		upgrader := &websocket.Upgrader{
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			log.Println("Upgrade failed:", err)
+			return
+		}
+		defer conn.Close()
+
+		client := &client{wsconn: conn, evtChan: make(chan events.LRCEvent, 100)}
+		s.clientsMu.Lock()
+		s.clients[client] = true
+		s.clientsMu.Unlock()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); s.wsWriter(client, ctx, cancel) }()
+		go func() { defer wg.Done(); s.listenToWS(client, ctx, cancel) }()
+		client.evtChan <- s.welcomeEvt
+		s.logDebug("greeted new ws connection!")
+		wg.Wait()
+
+		s.clientsMu.Lock()
+		delete(s.clients, client)
+		close(client.evtChan)
+		s.checkIfEmpty()
+		s.clientsMu.Unlock()
+		conn.Close()
+		s.logDebug("closed ws connection")
 	}
-	defer conn.Close()
-	client := &client{wsconn: conn, evtChan: make(chan events.LRCEvent, 100)}
-	s.clientsMu.Lock()
-	s.clients[client] = true
-	s.clientsMu.Unlock()
 
-	var wg sync.WaitGroup
-	wg.Add(2)
-	go func() { defer wg.Done(); client.wsWriter() }()
-	go func() { defer wg.Done(); s.listenToWS(client) }()
-	client.evtChan <- s.welcomeEvt
-	s.logDebug("greeted new ws connection!")
-	wg.Wait()
-
-	s.clientsMu.Lock()
-	delete(s.clients, client)
-	close(client.evtChan)
-	s.checkIfEmpty()
-	s.clientsMu.Unlock()
-	conn.Close()
-	s.logDebug("closed ws connection")
 }
 
 // Entrypoint
@@ -348,14 +314,18 @@ func (client *client) tcpWriter(degunkerError chan struct{}, ctx context.Context
 	}
 }
 
-func (s *Server) listenToWS(client *client) {
+func (s *Server) listenToWS(client *client, ctx context.Context, cancel context.CancelFunc) {
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-s.ctx.Done():
+			cancel()
 			return
 		default:
 			_, e, err := client.wsconn.ReadMessage()
 			if err != nil {
+				cancel()
 				return
 			}
 			s.logDebug(fmt.Sprintf("read %x", e))
@@ -364,16 +334,26 @@ func (s *Server) listenToWS(client *client) {
 	}
 }
 
-func (client *client) wsWriter() {
+func (s *Server) wsWriter(client *client, ctx context.Context, cancel context.CancelFunc) {
 	for {
-		evt, ok := <-client.evtChan
-		if !ok {
+		select {
+		case <-ctx.Done():
 			return
-		}
-		err := client.wsconn.WriteMessage(websocket.BinaryMessage, evt)
-		if err != nil {
+		case <-s.ctx.Done():
+			cancel()
 			return
+		case evt, ok := <-client.evtChan:
+			if !ok {
+				cancel()
+				return
+			}
+			err := client.wsconn.WriteMessage(websocket.BinaryMessage, evt)
+			if err != nil {
+				cancel()
+				return
+			}
 		}
+
 	}
 }
 
